@@ -2,6 +2,37 @@
 
 Brings corpus text into a form usable for training a speech synthesizer.
 """
+import re
+import unicodedata
+
+from utils.yoficator import CustomYoficator
+
+_TRANSLATION_MAP = {
+    # non-standard hyphens -> ASCII hyphen
+    "\u2010": "-", "\u2011": "-", "\u00ad": "-", "\ufe63": "-",
+    # non-standard dashes -> em dash
+    "\u2012": "—", "\u2013": "—", "\u2015": "—", "\u2212": "—",
+    # opening quote variants -> «
+    "\u201e": "«", "\u201c": "«",
+    # closing quote variants -> »
+    "\u201d": "»", "\u00bb": "»",
+    # single-quote variants -> '
+    "\u2018": "'", "\u2019": "'", "\u0060": "'",
+    # non-breaking / zero-width spaces -> regular space
+    "\u00a0": " ", "\u202f": " ", "\u200b": " ", "\ufeff": " ",
+    # markup/tech symbols -> space (not "", to avoid merging adjacent words)
+    "*": " ", "/": " ", "<": " ", ">": " ", "_": " ", "#": " ",
+    "@": " ", "\\": " ", "^": " ", "~": " ",
+}
+_TRANSLATE_TABLE = str.maketrans(_TRANSLATION_MAP)
+
+_RE_BROKEN_EXCL = re.compile(r"!\.{1,}")
+_RE_BROKEN_QUEST = re.compile(r"\?\.{1,}")
+_RE_MULTI_DOTS = re.compile(r"\.{4,}")
+_RE_SPACE_BEFORE_PUNCT = re.compile(r"\s+([.,!?:;…])")
+_RE_MULTI_SPACE = re.compile(r"[ \t]+")
+
+_YOFICATOR = CustomYoficator()
 
 
 class TextNormalizer:
@@ -25,19 +56,6 @@ class TextNormalizer:
         >>> normalizer.normalize("Расстреливать надо таких писателей!.")
         'Расстреливать надо таких писателей!'
     """
-
-    def __init__(self):
-        """Prepare the normalizer's resources.
-
-        Put anything expensive to build here: compiled regular expressions,
-        abbreviation and contraction dictionaries, a morphological analyzer.
-        Building them inside :meth:`normalize` means building them 22,200 times.
-        """
-
-        # Here goes your initialization logic
-
-        pass
-
     def normalize(self, text: str) -> str:
         """Normalize a single line.
 
@@ -56,7 +74,19 @@ class TextNormalizer:
             Normalize to NFC. Strings in NFC and NFD render identically in a terminal
             and compare unequal.
         """
+        if not text or not isinstance(text, str):
+            return ""
 
-        # Here goes your normalization logic
+        text = unicodedata.normalize("NFC", text)
+        text = text.translate(_TRANSLATE_TABLE)
+        text = _RE_BROKEN_EXCL.sub("!", text)
+        text = _RE_BROKEN_QUEST.sub("?", text)
+        text = _RE_MULTI_DOTS.sub("…", text)
 
-        return text
+        # е->ё restoration
+        _, text = _YOFICATOR.check_text(text)
+
+        text = _RE_SPACE_BEFORE_PUNCT.sub(r"\1", text)
+        text = _RE_MULTI_SPACE.sub(" ", text)
+
+        return text.strip()
