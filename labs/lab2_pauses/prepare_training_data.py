@@ -20,7 +20,7 @@ from praatio import textgrid
 import tqdm
 
 RUSLAN_META = '../../data/metadata_RUSLAN_22200_normalized.csv'
-ALIGN_DIR = '../../data/RUSLAN_align_v2/'
+ALIGN_DIR = '../../data/RUSLAN_align/v2'
 RESULT_PATH = 'data/RUSLAN_pause_metadata.csv'
 
 def read_text_grids(ruslan: pd.DataFrame, align_root: str) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:   

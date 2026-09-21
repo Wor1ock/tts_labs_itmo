@@ -1,13 +1,16 @@
 [project]
-name = "lab1-text"
+name = "tts-labs"
 version = "0.1.0"
-description = "Add your description here"
+description = ""
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "matplotlib>=3.11.2",
+    "numpy>=2.4.6",
     "pandas>=3.0.5",
+    "praatio>=6.2.2",
     "regex>=2026.9.10",
     "scikit-learn>=1.9.1",
     "soundfile>=0.14.0",
+    "tqdm>=4.70.1",
 ]
