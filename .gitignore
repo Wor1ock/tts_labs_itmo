@@ -3,6 +3,7 @@ data/*
 *.npy
 *.pth
 *.TextGrid
+catboost_info/
 
 # окружение
 .venv/
