@@ -1,22 +1,21 @@
 """Pause predictor — linear / logistic regression baseline, lab 2.
 
-Design, in order of what changed after the first pass got F1~0.68-0.69 with low
-precision (see report for the full diagnosis -- train/test gap was small, so the
-problem was bias/calibration, not overfitting):
+Design notes (see the report for the full diagnosis of the first two iterations):
 
   1. Hard rule override for "strong" punctuation (period, ellipsis, !, ?): these
      have P(pause) >= 0.9 in the data -- forced to `is_pause=1` regardless of what
-     the classifier says, guaranteeing near-total recall on the unambiguous part of
-     the corpus instead of leaving it to a probabilistic model.
+     the classifier says.
   2. Decision threshold tuned to maximize F1 on a held-out slice of `train` (not
-     `test`), instead of relying on `class_weight='balanced'`, which optimizes a
-     symmetric objective rather than F1 and was pushing recall up at precision's
-     expense.
-  3. `pause_duration` regressed in log-space (`log1p` / `expm1`) -- durations are
-     strongly right-skewed, and a plain linear fit on raw seconds is pulled around
-     by the long tail.
-  4. New lexical/syntactic features from `features.py` (gerund flags, next-token
-     SCONJ/CCONJ, curated conjunction markers) feed straight into the same model.
+     `test`), searched over a coarse grid (0.10 .. 0.90, step 0.05 -- 17 points)
+     instead of the full precision-recall curve, and instead of relying on
+     `class_weight='balanced'` (which optimizes a symmetric objective, not F1).
+  3. `pause_duration` regressed directly in seconds -- an earlier log1p/expm1
+     attempt made MAE *worse* (Jensen's inequality: exp(E[log X]) systematically
+     underestimates E[X] for right-skewed X), so it was reverted.
+  4. Feature set: `punct_class` (dominant feature), `word_len`, `rel_pos`,
+     `pos_in_sentence`, `sent_len`, POS context +/-2, and `tokens_since_punct` /
+     `tokens_to_punct` -- distance to the nearest punctuation mark, meant to help
+     the weak, unpunctuated ("none") segment specifically.
 
 Run as a script to fit on `train` and score on both folds::
 
@@ -30,7 +29,7 @@ import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.linear_model import LogisticRegression, LinearRegression
-from sklearn.metrics import precision_recall_curve
+from sklearn.metrics import f1_score, precision_score, recall_score
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
@@ -49,6 +48,9 @@ FEATURE_COLUMNS = CATEGORICAL_FEATURES + NUMERIC_FEATURES
 # out -- not reliable enough to force without the model's judgement.
 STRONG_PUNCT_CLASSES = frozenset({'period', 'ellipsis', 'exclaim', 'question'})
 
+# Coarse threshold grid: 0.10, 0.15, ..., 0.90 -- 17 points.
+THRESHOLD_GRID = np.round(np.arange(0.10, 0.90 + 1e-9, 0.05), 2)
+
 
 def _build_preprocessor() -> ColumnTransformer:
     """One-hot for categorical (punctuation, POS context), scaling for numeric --
@@ -60,12 +62,15 @@ def _build_preprocessor() -> ColumnTransformer:
     ])
 
 
-def _select_threshold(y_true: np.ndarray, y_proba: np.ndarray) -> float:
-    """Decision threshold maximizing F1 on the given (val) set."""
-    precisions, recalls, thresholds = precision_recall_curve(y_true, y_proba)
-    f1s = 2 * precisions * recalls / (precisions + recalls + 1e-9)
-    best_idx = int(np.nanargmax(f1s[:-1]))  # last P/R pair has no matching threshold
-    return float(thresholds[best_idx])
+def _select_threshold(y_true: np.ndarray, y_proba: np.ndarray, grid=THRESHOLD_GRID) -> float:
+    """Threshold from `grid` maximizing F1 on the given (validation) set."""
+    best_threshold, best_f1 = 0.5, -1.0
+    for t in grid:
+        preds = (y_proba >= t).astype(int)
+        f1 = f1_score(y_true, preds, zero_division=0)
+        if f1 > best_f1:
+            best_f1, best_threshold = f1, t
+    return float(best_threshold)
 
 
 class PausePredictorLinear:
@@ -128,7 +133,7 @@ class PausePredictorLinear:
 
         tp_mask = trainable & (train_df.is_pause_after.values == 1)
         X_reg = feats.loc[tp_mask, FEATURE_COLUMNS]
-        y_reg = np.log1p(train_df.pause_duration.values[tp_mask])  # log-space target
+        y_reg = train_df.pause_duration.values[tp_mask]  # raw seconds, no log transform
         self.reg.fit(X_reg, y_reg)
 
         self._fitted = True
@@ -150,8 +155,7 @@ class PausePredictorLinear:
         pause_duration = np.zeros(n, dtype=float)
         mask = is_pause.astype(bool)
         if mask.any():
-            log_durations = self.reg.predict(feats.loc[mask, FEATURE_COLUMNS])
-            durations = np.expm1(log_durations)
+            durations = self.reg.predict(feats.loc[mask, FEATURE_COLUMNS])
             durations = np.clip(durations, a_min=1e-3, a_max=None)
             pause_duration[mask] = durations
         return pause_duration
@@ -230,5 +234,16 @@ if __name__ == '__main__':
         is_pause_hat, pause_duration_hat = pp.predict_batch(evaluable)
         evaluable['is_pause_hat'] = is_pause_hat
         evaluable['pause_duration_hat'] = pause_duration_hat
-        print(f'-- {name} --')
+
+        print(f'\n-- {name} --')
         calc_metrics(evaluable)
+
+        if name == 'test':
+            print("\n=== Метрики по классам пунктуации (Test) ===")
+            for cls in evaluable.punct_class.unique():
+                sub = evaluable[evaluable.punct_class == cls]
+                if sub.is_pause_after.sum() == 0:
+                    continue
+                prc = precision_score(sub.is_pause_after, sub.is_pause_hat, zero_division=0)
+                rec = recall_score(sub.is_pause_after, sub.is_pause_hat, zero_division=0)
+                print(f"{cls:<10} | Всего токенов: {sub.shape[0]:<6} | P = {prc:.3f} | R = {rec:.3f}")

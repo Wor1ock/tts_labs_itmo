@@ -1,15 +1,17 @@
 """Pause predictor — gradient boosting (CatBoost), lab 2.
 
-Same fixes as `pause_predictor_linear.py` (see its module docstring for the full
-diagnosis): a hard rule override for strong punctuation, a tuned F1-maximizing
-decision threshold instead of class balancing, log-space duration regression, and
-the extended lexical/syntactic feature set from `features.py`.
+Same design as `pause_predictor_linear.py` (see its module docstring for the full
+diagnosis): a hard rule override for strong punctuation, a coarse-grid F1-maximizing
+decision threshold instead of class balancing, duration regressed directly in
+seconds (no log transform -- it made MAE worse), and the `punct_class` /
+`tokens_since_punct` / `tokens_to_punct` feature set.
 
 Categorical features (`punct_class`, POS context) are passed to CatBoost directly,
 by name (`cat_features=...`) -- no one-hot encoding needed, CatBoost handles
 categoricals natively.
 
-Run as a script to fit on `train` and score on both folds::
+Run as a script to fit on `train` and score on both folds, plus feature-importance
+and per-punctuation-class diagnostics::
 
     python pause_predictor_catboost.py
 """
@@ -20,7 +22,7 @@ import csv
 import numpy as np
 import pandas as pd
 from catboost import CatBoostClassifier, CatBoostRegressor
-from sklearn.metrics import precision_recall_curve
+from sklearn.metrics import f1_score, precision_score, recall_score
 from sklearn.model_selection import train_test_split
 
 from features import (
@@ -37,13 +39,19 @@ FEATURE_COLUMNS = CATEGORICAL_FEATURES + NUMERIC_FEATURES
 # out -- not reliable enough to force without the model's judgement.
 STRONG_PUNCT_CLASSES = frozenset({'period', 'ellipsis', 'exclaim', 'question'})
 
+# Coarse threshold grid: 0.10, 0.15, ..., 0.90 -- 17 points.
+THRESHOLD_GRID = np.round(np.arange(0.10, 0.90 + 1e-9, 0.05), 2)
 
-def _select_threshold(y_true: np.ndarray, y_proba: np.ndarray) -> float:
-    """Decision threshold maximizing F1 on the given (val) set."""
-    precisions, recalls, thresholds = precision_recall_curve(y_true, y_proba)
-    f1s = 2 * precisions * recalls / (precisions + recalls + 1e-9)
-    best_idx = int(np.nanargmax(f1s[:-1]))  # last P/R pair has no matching threshold
-    return float(thresholds[best_idx])
+
+def _select_threshold(y_true: np.ndarray, y_proba: np.ndarray, grid=THRESHOLD_GRID) -> float:
+    """Threshold from `grid` maximizing F1 on the given (validation) set."""
+    best_threshold, best_f1 = 0.5, -1.0
+    for t in grid:
+        preds = (y_proba >= t).astype(int)
+        f1 = f1_score(y_true, preds, zero_division=0)
+        if f1 > best_f1:
+            best_f1, best_threshold = f1, t
+    return float(best_threshold)
 
 
 class PausePredictorCatboost:
@@ -111,7 +119,7 @@ class PausePredictorCatboost:
 
         tp_mask = trainable & (train_df.is_pause_after.values == 1)
         X_reg = feats.loc[tp_mask, FEATURE_COLUMNS]
-        y_reg = np.log1p(train_df.pause_duration.values[tp_mask])  # log-space target
+        y_reg = train_df.pause_duration.values[tp_mask]  # raw seconds, no log transform
         self.reg.fit(X_reg, y_reg)
 
         self._fitted = True
@@ -139,8 +147,7 @@ class PausePredictorCatboost:
         pause_duration = np.zeros(n, dtype=float)
         mask = is_pause.astype(bool)
         if mask.any():
-            log_durations = self.reg.predict(feats.loc[mask, FEATURE_COLUMNS])
-            durations = np.expm1(log_durations)
+            durations = self.reg.predict(feats.loc[mask, FEATURE_COLUMNS])
             durations = np.clip(durations, a_min=1e-3, a_max=None)
             pause_duration[mask] = durations
         return pause_duration
@@ -208,9 +215,9 @@ if __name__ == '__main__':
     test_df = df[df.set == 'test'].reset_index(drop=True)
 
     pp = PausePredictorCatboost(verbose=100).fit(train_df)
-    from sklearn.metrics import precision_score, recall_score, average_precision_score
+    print(f'Tuned decision threshold: {pp.threshold:.3f}')
 
-    # --- Диагностика 1: Вывод Feature Importance ---
+    # --- Диагностика 1: Feature Importance ---
     print("\n=== CatBoost Feature Importance ===")
     importances = pp.clf.get_feature_importance(prettified=True)
     print(importances)
@@ -220,11 +227,11 @@ if __name__ == '__main__':
         is_pause_hat, pause_duration_hat = pp.predict_batch(evaluable)
         evaluable['is_pause_hat'] = is_pause_hat
         evaluable['pause_duration_hat'] = pause_duration_hat
-        
+
         print(f'\n-- {name} --')
         calc_metrics(evaluable)
-        
-        # --- Диагностика 2: Разбивка Precision/Recall по punct_class на тесте ---
+
+        # --- Диагностика 2: Precision/Recall по punct_class на тесте ---
         if name == 'test':
             print("\n=== Метрики по классам пунктуации (Test) ===")
             for cls in evaluable.punct_class.unique():
@@ -234,4 +241,3 @@ if __name__ == '__main__':
                 prc = precision_score(sub.is_pause_after, sub.is_pause_hat, zero_division=0)
                 rec = recall_score(sub.is_pause_after, sub.is_pause_hat, zero_division=0)
                 print(f"{cls:<10} | Всего токенов: {sub.shape[0]:<6} | P = {prc:.3f} | R = {rec:.3f}")
-

@@ -4,6 +4,7 @@ Extracts, per token of a sentence, the features `PausePredictorLinear` and
 `PausePredictorCatboost` train on:
 
     punct_class     -- type of punctuation right after the token (period, comma, ...)
+                        -- the single strongest feature (~37% CatBoost importance)
     word_len        -- number of Cyrillic letters in the token
     rel_pos         -- relative position in the sentence, 0.0 (first) .. 1.0 (last)
     pos_in_sentence -- absolute 0-based position
@@ -15,19 +16,14 @@ Extracts, per token of a sentence, the features `PausePredictorLinear` and
     pos_prev2, pos_prev1, pos_curr, pos_next1, pos_next2
                     -- POS tags of the current token and its +/-2 neighbours,
                        tagged with Natasha (context-aware, sequence tagging)
-    is_curr_gerund, is_prev1_gerund
-                    -- whether the current / previous token is a gerund
-                       ("деепричастие", VerbForm=Conv) -- a strong pause trigger
-                       that a coarse POS tag alone does not capture (a gerund is
-                       tagged VERB, same as a finite verb)
-    next_is_sconj, next_is_cconj
-                    -- whether the *next* token is a subordinating / coordinating
-                       conjunction (SCONJ / CCONJ) -- these usually open a new
-                       clause, which is a common (often comma-less) pause site
-    next_is_marker  -- whether the next token's word form is a curated discourse
-                       marker / conjunction / relative pronoun (see
-                       CONJUNCTION_MARKERS below) -- a lexical backstop for cases
-                       the POS tagger mis-tags or where the marker isn't a SCONJ
+    tokens_since_punct
+                    -- how many tokens ago the last punctuation mark occurred (0 if
+                       the *previous* token was punctuated, counted from sentence
+                       start otherwise) -- signal for how deep into an unbroken,
+                       comma-less stretch of the sentence we are
+    tokens_to_punct -- how many tokens until the *next* punctuation mark (0 if the
+                       current token itself is punctuated; distance to sentence end
+                       if none follows) -- same idea, looking forward
 
 Two entry points:
     FeatureExtractor.extract_sentence(tokens)   -- inference time, one sentence
@@ -50,7 +46,6 @@ from functools import lru_cache
 from typing import Optional
 
 import pandas as pd
-from tqdm import tqdm
 
 try:
     from natasha import Segmenter, MorphVocab, NewsEmbedding, NewsMorphTagger, Doc
@@ -107,18 +102,34 @@ def word_len(label: str) -> int:
     return len(clean_letters(label))
 
 
-# --- lexical markers --------------------------------------------------------------
-# Small, curated set of Russian subordinating/coordinating conjunctions and relative
-# pronouns that commonly open a new clause -- a lexical backstop alongside the SCONJ
-# / CCONJ POS signal, for cases the tagger mislabels or that carry the meaning
-# without being tagged as a conjunction (e.g. relative "который").
+def punct_distances(punct_classes: list[str]) -> tuple[list[int], list[int]]:
+    """Distance (in tokens) to the nearest punctuation mark, backward and forward.
 
-CONJUNCTION_MARKERS = frozenset({
-    'однако', 'хотя', 'чтобы', 'если', 'пока', 'словно', 'будто', 'ибо',
-    'потому', 'поэтому', 'зато', 'причём', 'притом', 'также', 'причем',
-    'который', 'которая', 'которое', 'которые', 'которого', 'которой',
-    'которых', 'которую', 'которым', 'которыми', 'котором',
-})
+    `tokens_since_punct[i]` -- tokens since the last punctuated token *before* i
+    (0 means the immediately preceding token was punctuated); counted from the
+    start of the sentence if there is no earlier punctuation.
+
+    `tokens_to_punct[i]` -- tokens until the next punctuated token *at or after* i
+    (0 means the token itself is punctuated); counted to the end of the sentence
+    if no punctuation follows.
+    """
+    n = len(punct_classes)
+    since = [0] * n
+    to = [0] * n
+
+    last_punct_idx = -1  # virtual punctuation boundary before the sentence starts
+    for i in range(n):
+        since[i] = i - last_punct_idx - 1
+        if punct_classes[i] != NO_PUNCT:
+            last_punct_idx = i
+
+    next_punct_idx = n  # virtual punctuation boundary at the sentence end
+    for i in range(n - 1, -1, -1):
+        if punct_classes[i] != NO_PUNCT:
+            next_punct_idx = i
+        to[i] = next_punct_idx - i
+
+    return since, to
 
 
 # --- POS tagging (Natasha) -------------------------------------------------------
@@ -141,40 +152,35 @@ class PosTagger:
         self._emb = NewsEmbedding()
         self._morph_tagger = NewsMorphTagger(self._emb)
 
-    def tag_sentence(self, tokens: list[str]) -> tuple[list[str], list[bool]]:
+    def tag_sentence(self, tokens: list[str]) -> list[str]:
         """POS-tag a sentence given as plain word tokens (letters only, no punctuation).
 
         Reconstructs a sentence string, runs Natasha's segmentation + morphology
         tagger on it (this is what makes the tagging *context-aware* -- it's not a
-        per-word lookup), then aligns the results back to the input tokens by order.
-
-        Returns `(pos_tags, is_gerund)`: POS tags, and whether each token is a
-        gerund ("деепричастие", VerbForm=Conv -- tagged VERB same as a finite verb,
-        so this needs the morphological features, not just the coarse POS).
+        per-word lookup), then aligns the resulting tags back to the input tokens by
+        order.
 
         If Natasha's own tokenization doesn't line up 1:1 with the input (rare --
-        e.g. an unusual token gets split), the mismatch is padded/truncated rather
-        than raised, so a single odd sentence never crashes a batch run.
+        e.g. an unusual token gets split), the mismatch is padded/truncated with
+        `UNK_POS` rather than raised, so a single odd sentence never crashes a batch
+        run over the whole corpus.
         """
         if not tokens:
-            return [], []
+            return []
 
         text = ' '.join(t for t in tokens if t)
         doc = Doc(text)
         doc.segment(self._segmenter)
         doc.tag_morph(self._morph_tagger)
 
-        word_tokens = [t for t in doc.tokens if t.pos != 'PUNCT']
-        word_tags = [t.pos for t in word_tokens]
-        gerund_flags = [bool(t.feats) and t.feats.get('VerbForm') == 'Conv' for t in word_tokens]
+        word_tags = [t.pos for t in doc.tokens if t.pos != 'PUNCT']
 
         n = len(tokens)
         if len(word_tags) == n:
-            return word_tags, gerund_flags
+            return word_tags
         if len(word_tags) > n:
-            return word_tags[:n], gerund_flags[:n]
-        pad = n - len(word_tags)
-        return word_tags + [UNK_POS] * pad, gerund_flags + [False] * pad
+            return word_tags[:n]
+        return word_tags + [UNK_POS] * (n - len(word_tags))
 
 
 @lru_cache(maxsize=1)
@@ -202,7 +208,7 @@ def pos_context(pos_tags: list[str], idx: int, window: int = CONTEXT_WINDOW) -> 
 CATEGORICAL_FEATURES = ['punct_class', 'pos_prev2', 'pos_prev1', 'pos_curr', 'pos_next1', 'pos_next2']
 NUMERIC_FEATURES = [
     'word_len', 'rel_pos', 'pos_in_sentence', 'sent_len',
-    'is_curr_gerund', 'is_prev1_gerund', 'next_is_sconj', 'next_is_cconj', 'next_is_marker',
+    'tokens_since_punct', 'tokens_to_punct',
 ]
 ALL_FEATURES = CATEGORICAL_FEATURES + NUMERIC_FEATURES
 
@@ -212,8 +218,8 @@ class FeatureExtractor:
     """Builds the per-token feature table shared by both predictor implementations.
 
     Set `use_pos=False` to skip Natasha entirely (e.g. for a quick sanity run
-    without the POS-context/gerund/conjunction features, or if natasha isn't
-    installed) -- POS-derived columns are then filled with defaults (`UNK_POS`, 0).
+    without the POS-context features, or if natasha isn't installed) -- POS columns
+    are then filled with `UNK_POS`.
     """
 
     use_pos: bool = True
@@ -231,28 +237,22 @@ class FeatureExtractor:
         """
         n = len(tokens)
         clean_tokens = [clean_letters(t) for t in tokens]
+        punct_classes = [punct_class(t) for t in tokens]
+        since_punct, to_punct = punct_distances(punct_classes)
 
-        if self.use_pos:
-            pos_tags, gerund_flags = self._tagger.tag_sentence(clean_tokens)
-        else:
-            pos_tags, gerund_flags = [UNK_POS] * n, [False] * n
+        pos_tags = self._tagger.tag_sentence(clean_tokens) if self.use_pos else [UNK_POS] * n
 
         rows = []
         for i, tok in enumerate(tokens):
-            next_pos = pos_tags[i + 1] if i + 1 < n else PAD_POS
-            next_word = clean_tokens[i + 1] if i + 1 < n else ''
             row = {
-                'punct_class': punct_class(tok),
+                'punct_class': punct_classes[i],
                 'word_len': word_len(tok),
                 'rel_pos': i / max(n - 1, 1),
                 'pos_in_sentence': i,
                 'sent_len': n,
                 'is_last_word': int(i == n - 1),
-                'is_curr_gerund': int(gerund_flags[i]) if i < len(gerund_flags) else 0,
-                'is_prev1_gerund': int(gerund_flags[i - 1]) if 0 <= i - 1 < len(gerund_flags) else 0,
-                'next_is_sconj': int(next_pos == 'SCONJ'),
-                'next_is_cconj': int(next_pos == 'CCONJ'),
-                'next_is_marker': int(next_word in CONJUNCTION_MARKERS),
+                'tokens_since_punct': since_punct[i],
+                'tokens_to_punct': to_punct[i],
             }
             row.update(pos_context(pos_tags, i))
             rows.append(row)
@@ -273,7 +273,7 @@ class FeatureExtractor:
         df = df.reset_index(drop=True)
         feat_rows: list = [None] * len(df)
 
-        for _, group in tqdm(df.groupby('id', sort=False), total=df['id'].nunique(), desc="Extracting features by sentence"):
+        for _, group in df.groupby('id', sort=False):
             tokens = group.label_raw.tolist()
             feats = self.extract_sentence(tokens)
             for local_i, orig_i in enumerate(group.index):
@@ -312,8 +312,9 @@ def load_cached_features(df: pd.DataFrame, cache_path: str) -> Optional[pd.DataF
     still matching `df` row-for-row (same `id` sequence).
 
     Returns `None` (rather than raising) if the cache is missing, stale, or from an
-    older feature set (missing a column added since), so callers fall back to
-    recomputation instead of crashing.
+    older feature set (missing a column added since, or carrying columns dropped
+    since), so callers fall back to recomputation instead of crashing or silently
+    using outdated features.
     """
     if not os.path.exists(cache_path):
         return None
@@ -321,9 +322,10 @@ def load_cached_features(df: pd.DataFrame, cache_path: str) -> Optional[pd.DataF
     df = df.reset_index(drop=True)
     cached = pd.read_csv(cache_path, sep='|', quoting=csv.QUOTE_NONE)
 
-    if not set(ALL_FEATURES).issubset(cached.columns):
-        print(f'[features] Cache at {cache_path} is missing newer feature columns -- '
-              f'ignoring it, will recompute. Re-run build_features_cache.py to refresh it.')
+    if set(ALL_FEATURES) != set(cached.columns) - {'id'}:
+        print(f'[features] Cache at {cache_path} has a different feature set than the '
+              f'current code -- ignoring it, will recompute. Re-run build_features_cache.py '
+              f'to refresh it.')
         return None
 
     if len(cached) != len(df) or not (cached.id.values == df.id.values).all():
