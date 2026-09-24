@@ -1,62 +1,69 @@
-"""Pause predictor — skeleton for lab 2.
+"""Скелет предсказателя пауз — lab 2.
 
-Run as a script to score the predictor on the prepared data::
+Определяет базовый интерфейс `PausePredictor` (`predict`, `predict_durations`)
+и функцию подсчёта метрик, общую для всех реализаций (linear, catboost).
+
+Запуск как скрипта считает метрики базового (пустого) предиктора на подготовленных
+данных::
 
     python pause_predictor.py
 
-Precision, recall and F1 are computed for `is_pause_after`, and MAE for `pause_duration`
-on true positives only. The last word of every utterance is excluded.
+Считаются precision, recall и F1 для `is_pause_after`, и MAE для `pause_duration`
+только по истинно положительным срабатываниям. Последнее слово каждого
+высказывания исключается из оценки.
 """
 import csv
+
 import numpy as np
-import tqdm
 import pandas as pd
-from sklearn.metrics import f1_score, precision_score, recall_score
-from sklearn.metrics import mean_absolute_error
+import tqdm
+from sklearn.metrics import f1_score, mean_absolute_error, precision_score, recall_score
 
 PAUSE_PREDICTOR_DATA = 'data/RUSLAN_pause_metadata.csv'
 
-class PausePredictor():
-    """Predicts where pauses fall in a sentence and how long they are.
 
-    Input is one sentence as a sequence of `label_raw` tokens — words with their
-    trailing punctuation, in order::
+class PausePredictor():
+    """Предсказывает расположение пауз в предложении и их длительность.
+
+    На вход подаётся одно предложение как последовательность токенов
+    `label_raw` — слова с последующей пунктуацией, по порядку::
 
         ["Я", "вышел", "из", "дома,", "когда", "стемнело."]
     """
 
     def predict(self, tokens: list[str] | np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Decide for each token whether a pause follows it.
+        """Решает для каждого токена, следует ли за ним пауза.
 
         Args:
-            tokens: Tokens of one sentence.
+            tokens: Токены одного предложения.
 
         Returns:
-            `is_pause` (int, 1 if a pause follows the token) and `pause_duration`
-            (float, seconds, 0.0 where there is no pause), both of length `len(tokens)`.
+            Кортеж `(is_pause, pause_duration)`: `is_pause` (int, 1 если пауза
+            следует за токеном) и `pause_duration` (float, секунды, 0.0 где
+            паузы нет), оба длиной `len(tokens)`.
 
         Note:
-            Wherever `is_pause` is 1 the duration must be positive:
-            :meth:`predict_durations` relies on it.
+            Там, где `is_pause` равен 1, длительность должна быть положительной:
+            :meth:`predict_durations` на это полагается.
         """
-        
         is_pause = np.zeros(len(tokens), int)
         pause_duration = np.zeros(len(tokens), float)
 
         return is_pause, pause_duration
 
     def predict_durations(self, tokens: list[str] | np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Insert predicted pauses into the token sequence.
+        """Вставляет предсказанные паузы в последовательность токенов.
 
-        This is the form the acoustic model consumes in labs 4 and 5.
+        Это формат, который потребляет акустическая модель в лабах 4 и 5.
 
         Args:
-            tokens: Tokens of one sentence.
+            tokens: Токены одного предложения.
 
         Returns:
-            Tokens with ``"<SIL>"`` after every predicted pause, and one duration per
-            output token: seconds for ``"<SIL>"``, ``-1.0`` for words (left to the
-            acoustic model).
+            Кортеж `(tokens_w_pauses, durations_w_pauses)`: токены с `"<SIL>"`
+            после каждой предсказанной паузы, и по одной длительности на
+            выходной токен: секунды для `"<SIL>"`, `-1.0` для слов (оставлено
+            акустической модели).
         """
         def expand_is_pause(token: str, is_pause: int) -> list[str]:
             if bool(is_pause):
@@ -64,40 +71,50 @@ class PausePredictor():
             return [token]
 
         def expand_durations(pause_duration: float) -> list[float]:
-            if pause_duration>0.:
+            if pause_duration > 0.:
                 return [-1., pause_duration]
             return [-1.]
-            
+
         is_pause, durations = self.predict(tokens)
 
         tokens_w_pauses = np.concatenate([expand_is_pause(a, b) for a, b in zip(tokens, is_pause)])
         durations_w_pauses = np.concatenate([expand_durations(dur) for dur in durations]).astype(np.float32)
-        
+
         return tokens_w_pauses, durations_w_pauses
 
-def calc_metrics(df: pd.DataFrame) -> None:
-    """Print precision, recall and F1 for pause placement, and MAE for pause duration.
 
-    MAE counts only rows where both the reference and the prediction have a pause.
+def calc_metrics(df: pd.DataFrame) -> None:
+    """Печатает precision, recall и F1 для расположения пауз, и MAE для длительности.
+
+    MAE считается только по строкам, где пауза есть и в разметке, и в предсказании.
+
+    Args:
+        df: Таблица со столбцами `is_pause_after`, `is_pause_hat`,
+            `pause_duration`, `pause_duration_hat`.
     """
-    rec =recall_score(df.is_pause_after, df.is_pause_hat)
+    rec = recall_score(df.is_pause_after, df.is_pause_hat)
     prc = precision_score(df.is_pause_after, df.is_pause_hat)
     f1 = f1_score(df.is_pause_after, df.is_pause_hat)
 
-    mae = mean_absolute_error(df[(df.is_pause_after==1) & (df.is_pause_hat==1)].pause_duration, df[(df.is_pause_after==1) & (df.is_pause_hat==1)].pause_duration_hat)
+    mae = mean_absolute_error(
+        df[(df.is_pause_after == 1) & (df.is_pause_hat == 1)].pause_duration,
+        df[(df.is_pause_after == 1) & (df.is_pause_hat == 1)].pause_duration_hat,
+    )
     print(f'PRC: {prc}, REC: {rec}, F1: {f1}; MAE: {mae};')
 
-def test_pause_predictor() -> None:
-    """Run the predictor on every sentence and print train and test metrics.
 
-    Expects the layout written by `prepare_training_data.py`: rows grouped by utterance
-    in order, each utterance ending with its `is_last_word` row.
+def test_pause_predictor() -> None:
+    """Прогоняет предиктор по каждому предложению и печатает метрики train/test.
+
+    Ожидает разметку, записанную `prepare_training_data.py`: строки сгруппированы
+    по высказыванию по порядку, каждое высказывание заканчивается строкой с
+    `is_last_word`.
     """
-    pause_df =pd.read_csv(PAUSE_PREDICTOR_DATA, sep='|', quoting=csv.QUOTE_NONE)
+    pause_df = pd.read_csv(PAUSE_PREDICTOR_DATA, sep='|', quoting=csv.QUOTE_NONE)
 
     pp = PausePredictor()
 
-    lens = {i:l for i, l in pause_df.groupby('id').count().reset_index(drop=False)[['id', 'label']].values}
+    lens = {i: l for i, l in pause_df.groupby('id').count().reset_index(drop=False)[['id', 'label']].values}
 
     is_pause_after_hat = []
     pause_duration_hat = []
@@ -106,21 +123,22 @@ def test_pause_predictor() -> None:
     for i, is_last in tqdm.tqdm(pause_df[['id', 'is_last_word']].values):
         if not is_last:
             continue
-        sentence = pause_df.iloc[idx:idx+lens[i]]
+        sentence = pause_df.iloc[idx:idx + lens[i]]
         idx += lens[i]
-    
+
         is_pause_hat, pause_dur_hat = pp.predict(sentence.label_raw.values)
         is_pause_after_hat += list(is_pause_hat)
         pause_duration_hat += list(pause_dur_hat)
-    
+
     pause_df['is_pause_hat'] = is_pause_after_hat
     pause_df['pause_duration_hat'] = pause_duration_hat
-    
+
     print('Calculate metrics, traning fold; Exclude last tokens in every sentence!')
-    calc_metrics(pause_df[(pause_df.set=='train') & (pause_df.is_last_word==0)])
+    calc_metrics(pause_df[(pause_df.set == 'train') & (pause_df.is_last_word == 0)])
 
     print('\nCalculate metrics, testing fold; Exclude last tokens in every sentence!')
-    calc_metrics(pause_df[(pause_df.set=='test') & (pause_df.is_last_word==0)])
-    
-if __name__=='__main__':
+    calc_metrics(pause_df[(pause_df.set == 'test') & (pause_df.is_last_word == 0)])
+
+
+if __name__ == '__main__':
     test_pause_predictor()

@@ -1,40 +1,47 @@
-"""Feature extraction for the pause predictor — lab 2.
+"""Извлечение признаков для предсказателя пауз — lab 2.
 
-Extracts, per token of a sentence, the features `PausePredictorLinear` and
-`PausePredictorCatboost` train on:
+Для каждого токена предложения строит признаки, на которых обучаются
+`PausePredictorLinear` и `PausePredictorCatboost`:
 
-    punct_class     -- type of punctuation right after the token (period, comma, ...)
-                        -- the single strongest feature (~37% CatBoost importance)
-    word_len        -- number of Cyrillic letters in the token
-    rel_pos         -- relative position in the sentence, 0.0 (first) .. 1.0 (last)
-    pos_in_sentence -- absolute 0-based position
-    sent_len        -- number of tokens in the sentence
-    is_last_word    -- 1 for the sentence's last word (present as a feature; the
-                        *label* for this row is still excluded from training/eval
-                        per the lab's protocol -- that filtering happens in the
-                        predictor modules, not here)
+    punct_class     -- тип пунктуации сразу после токена (точка, запятая, ...)
+                        -- самый сильный признак (~37% важности в CatBoost)
+    word_len        -- число кириллических букв в токене
+    rel_pos         -- относительная позиция в предложении, 0.0 (первое) .. 1.0 (последнее)
+    pos_in_sentence -- абсолютная позиция, с нуля
+    sent_len        -- число токенов в предложении
+    is_last_word    -- 1 для последнего слова предложения (это признак; сама
+                        *метка* для этой строки всё равно исключается из
+                        обучения/оценки по протоколу лабы -- эта фильтрация
+                        происходит в модулях предикторов, не здесь)
     pos_prev2, pos_prev1, pos_curr, pos_next1, pos_next2
-                    -- POS tags of the current token and its +/-2 neighbours,
-                       tagged with Natasha (context-aware, sequence tagging)
+                    -- POS-теги текущего токена и соседей в окне +/-2,
+                       размечены Natasha (учитывает контекст всей
+                       последовательности, а не разметка слова изолированно)
     tokens_since_punct
-                    -- how many tokens ago the last punctuation mark occurred (0 if
-                       the *previous* token was punctuated, counted from sentence
-                       start otherwise) -- signal for how deep into an unbroken,
-                       comma-less stretch of the sentence we are
-    tokens_to_punct -- how many tokens until the *next* punctuation mark (0 if the
-                       current token itself is punctuated; distance to sentence end
-                       if none follows) -- same idea, looking forward
+                    -- сколько токенов назад была последняя пунктуация (0, если
+                       *предыдущий* токен был с пунктуацией; иначе считается от
+                       начала предложения) -- насколько глубоко мы внутри
+                       непрерывного, без запятых, отрезка предложения
+    tokens_to_punct -- сколько токенов до *следующей* пунктуации (0, если сам
+                       текущий токен с пунктуацией; до конца предложения, если
+                       дальше пунктуации нет) -- та же идея, но вперёд
+    is_next_cconj   -- 1, если POS следующего токена -- сочинительный союз
+                       (CCONJ); маркер границы клауз перед союзом
+    is_curr_noun_or_propn
+                    -- 1, если POS текущего токена -- существительное или
+                       имя собственное (NOUN/PROPN); маркер конца именной группы
 
-Two entry points:
-    FeatureExtractor.extract_sentence(tokens)   -- inference time, one sentence
-    FeatureExtractor.extract_dataframe(df)      -- training time, batch over the
-                                                    RUSLAN_pause_metadata.csv layout
+Две точки входа:
+    FeatureExtractor.extract_sentence(tokens)   -- инференс, одно предложение
+    FeatureExtractor.extract_dataframe(df)      -- обучение, батчем по формату
+                                                    RUSLAN_pause_metadata.csv
 
-Caching: extracting POS features over the whole corpus is slow (Natasha runs once
-per sentence). `extract_and_cache_dataframe` / `load_cached_features` at the bottom
-of this module let you run extraction once (see `build_features_cache.py`) and have
-`pause_predictor_linear.py` / `pause_predictor_catboost.py` load the result instead
-of recomputing it on every run.
+Кеширование: извлечение POS-признаков по всему корпусу медленное (Natasha
+вызывается на каждое предложение). `extract_and_cache_dataframe` /
+`load_cached_features` внизу модуля позволяют посчитать признаки один раз (см.
+`build_features_cache.py`), а `pause_predictor_linear.py` /
+`pause_predictor_catboost.py` — загрузить результат вместо пересчёта на
+каждом запуске.
 """
 from __future__ import annotations
 
@@ -48,15 +55,15 @@ from typing import Optional
 import pandas as pd
 
 try:
-    from natasha import Segmenter, MorphVocab, NewsEmbedding, NewsMorphTagger, Doc
+    from natasha import Doc, MorphVocab, NewsEmbedding, NewsMorphTagger, Segmenter
     _NATASHA_AVAILABLE = True
-except ImportError:  # pragma: no cover - environment without natasha installed
+except ImportError:  # pragma: no cover - окружение без natasha
     _NATASHA_AVAILABLE = False
 
 
-# --- punctuation classification -------------------------------------------------
-# Same categories used during EDA (report.md / eda.ipynb §5), kept consistent so
-# the feature distributions line up with the analysis that motivated them.
+# --- классификация пунктуации ----------------------------------------------------
+# Те же категории, что использовались в EDA (report.md / eda.ipynb §5) -- чтобы
+# распределения признаков совпадали с анализом, который их мотивировал.
 
 _PUNCT_PATTERNS = [
     (re.compile(r'\.\.\.$|…$'), 'ellipsis'),
@@ -74,13 +81,25 @@ OTHER_PUNCT = 'other'
 
 _LETTERS_RE = re.compile(r'[^а-яё]')
 
-UNK_POS = 'UNK'    # Natasha/tokenization mismatch fallback
-PAD_POS = 'NONE'   # out-of-sentence-bounds context (start/end of sentence)
-CONTEXT_WINDOW = 2  # words before/after, as requested
+UNK_POS = 'UNK'    # несовпадение токенизации Natasha -- запасное значение
+PAD_POS = 'NONE'   # контекст за границами предложения (начало/конец)
+CONTEXT_WINDOW = 2  # слов до/после
+
+# POS-теги, из которых считаются производные бинарные признаки
+_CCONJ_TAG = 'CCONJ'
+_NOUN_LIKE_TAGS = frozenset({'NOUN', 'PROPN'})
 
 
 def punct_class(label_raw: str) -> str:
-    """Classify the punctuation that follows a token, from its `label_raw` form."""
+    """Определяет тип пунктуации после токена по его форме `label_raw`.
+
+    Args:
+        label_raw: Токен с исходной пунктуацией (например, "дома,").
+
+    Returns:
+        Название класса пунктуации (`period`, `comma`, ... , `NO_PUNCT` или
+        `OTHER_PUNCT`).
+    """
     if not isinstance(label_raw, str):
         return NO_PUNCT
     s = label_raw.strip()
@@ -91,39 +110,45 @@ def punct_class(label_raw: str) -> str:
 
 
 def clean_letters(label: str) -> str:
-    """Keep only Cyrillic letters (drops punctuation/digits/spaces)."""
+    """Оставляет только кириллические буквы (убирает пунктуацию/цифры/пробелы)."""
     if not isinstance(label, str):
         return ''
     return _LETTERS_RE.sub('', label.lower())
 
 
 def word_len(label: str) -> int:
-    """Number of Cyrillic letters in a token."""
+    """Число кириллических букв в токене."""
     return len(clean_letters(label))
 
 
 def punct_distances(punct_classes: list[str]) -> tuple[list[int], list[int]]:
-    """Distance (in tokens) to the nearest punctuation mark, backward and forward.
+    """Расстояние (в токенах) до ближайшей пунктуации, назад и вперёд.
 
-    `tokens_since_punct[i]` -- tokens since the last punctuated token *before* i
-    (0 means the immediately preceding token was punctuated); counted from the
-    start of the sentence if there is no earlier punctuation.
+    `tokens_since_punct[i]` -- сколько токенов прошло с последнего
+    пунктуированного токена *до* i (0 значит, что непосредственно предыдущий
+    токен был с пунктуацией); от начала предложения, если пунктуации раньше не было.
 
-    `tokens_to_punct[i]` -- tokens until the next punctuated token *at or after* i
-    (0 means the token itself is punctuated); counted to the end of the sentence
-    if no punctuation follows.
+    `tokens_to_punct[i]` -- сколько токенов до следующего пунктуированного
+    токена *начиная с* i (0 значит, что сам токен с пунктуацией); до конца
+    предложения, если дальше пунктуации нет.
+
+    Args:
+        punct_classes: Классы пунктуации всех токенов предложения, по порядку.
+
+    Returns:
+        Кортеж `(tokens_since_punct, tokens_to_punct)`, оба длиной `len(punct_classes)`.
     """
     n = len(punct_classes)
     since = [0] * n
     to = [0] * n
 
-    last_punct_idx = -1  # virtual punctuation boundary before the sentence starts
+    last_punct_idx = -1  # виртуальная граница пунктуации до начала предложения
     for i in range(n):
         since[i] = i - last_punct_idx - 1
         if punct_classes[i] != NO_PUNCT:
             last_punct_idx = i
 
-    next_punct_idx = n  # virtual punctuation boundary at the sentence end
+    next_punct_idx = n  # виртуальная граница пунктуации после конца предложения
     for i in range(n - 1, -1, -1):
         if punct_classes[i] != NO_PUNCT:
             next_punct_idx = i
@@ -132,14 +157,14 @@ def punct_distances(punct_classes: list[str]) -> tuple[list[int], list[int]]:
     return since, to
 
 
-# --- POS tagging (Natasha) -------------------------------------------------------
+# --- POS-теггинг (Natasha) --------------------------------------------------------
 
 class PosTagger:
-    """Thin wrapper around Natasha's morphology pipeline.
+    """Обёртка над морфологическим пайплайном Natasha.
 
-    `NewsEmbedding` is a sizeable model (downloaded on first use, cached locally
-    afterwards) -- built once per `PosTagger` instance and reused, never rebuilt
-    per sentence.
+    `NewsEmbedding` -- тяжёлая модель (скачивается при первом использовании,
+    затем кешируется локально) -- собирается один раз на экземпляр `PosTagger`
+    и переиспользуется, а не пересобирается на каждое предложение.
     """
 
     def __init__(self):
@@ -153,17 +178,23 @@ class PosTagger:
         self._morph_tagger = NewsMorphTagger(self._emb)
 
     def tag_sentence(self, tokens: list[str]) -> list[str]:
-        """POS-tag a sentence given as plain word tokens (letters only, no punctuation).
+        """POS-разметка предложения из "чистых" токенов (только буквы, без пунктуации).
 
-        Reconstructs a sentence string, runs Natasha's segmentation + morphology
-        tagger on it (this is what makes the tagging *context-aware* -- it's not a
-        per-word lookup), then aligns the resulting tags back to the input tokens by
-        order.
+        Собирает из токенов строку и прогоняет через сегментацию + морфологический
+        тэггер Natasha (именно это делает разметку *контекстно-зависимой* -- не
+        пословный lookup), затем выравнивает полученные теги обратно на входные
+        токены по порядку.
 
-        If Natasha's own tokenization doesn't line up 1:1 with the input (rare --
-        e.g. an unusual token gets split), the mismatch is padded/truncated with
-        `UNK_POS` rather than raised, so a single odd sentence never crashes a batch
-        run over the whole corpus.
+        Если токенизация Natasha не совпадает 1:1 со входом (редко -- например,
+        необычный токен разбился иначе), несовпадение не роняет вызов, а
+        дополняется/обрезается `UNK_POS`, чтобы одно странное предложение не
+        обрушивало прогон по всему корпусу.
+
+        Args:
+            tokens: Слова предложения без пунктуации.
+
+        Returns:
+            Список POS-тегов, той же длины, что и `tokens`.
         """
         if not tokens:
             return []
@@ -185,14 +216,21 @@ class PosTagger:
 
 @lru_cache(maxsize=1)
 def get_pos_tagger() -> PosTagger:
-    """Process-wide singleton -- avoids reloading the embedding model repeatedly."""
+    """Синглтон на процесс -- не даёт повторно грузить модель эмбеддингов."""
     return PosTagger()
 
 
 def pos_context(pos_tags: list[str], idx: int, window: int = CONTEXT_WINDOW) -> dict:
-    """+/- `window` POS-tag context around position `idx`, padded with PAD_POS.
+    """POS-контекст +/- `window` вокруг позиции `idx`, за границами -- `PAD_POS`.
 
-    Returns keys `pos_prev2, pos_prev1, pos_curr, pos_next1, pos_next2` for window=2.
+    Args:
+        pos_tags: POS-теги всего предложения.
+        idx: Позиция токена, для которого строится контекст.
+        window: Размер окна в каждую сторону.
+
+    Returns:
+        Словарь с ключами `pos_prev2, pos_prev1, pos_curr, pos_next1, pos_next2`
+        (для window=2).
     """
     feats = {}
     for offset in range(-window, window + 1):
@@ -205,21 +243,39 @@ def pos_context(pos_tags: list[str], idx: int, window: int = CONTEXT_WINDOW) -> 
     return feats
 
 
+def derived_pos_features(pos_ctx: dict) -> dict:
+    """Бинарные признаки, производные от POS-контекста токена.
+
+    Args:
+        pos_ctx: Словарь POS-контекста из `pos_context` (нужны ключи `pos_curr`,
+            `pos_next1`).
+
+    Returns:
+        Словарь с ключами `is_next_cconj` (следующий токен -- союз CCONJ) и
+        `is_curr_noun_or_propn` (текущий токен -- NOUN/PROPN), значения 0/1.
+    """
+    return {
+        'is_next_cconj': int(pos_ctx.get('pos_next1') == _CCONJ_TAG),
+        'is_curr_noun_or_propn': int(pos_ctx.get('pos_curr') in _NOUN_LIKE_TAGS),
+    }
+
+
 CATEGORICAL_FEATURES = ['punct_class', 'pos_prev2', 'pos_prev1', 'pos_curr', 'pos_next1', 'pos_next2']
 NUMERIC_FEATURES = [
     'word_len', 'rel_pos', 'pos_in_sentence', 'sent_len',
     'tokens_since_punct', 'tokens_to_punct',
+    'is_next_cconj', 'is_curr_noun_or_propn',
 ]
 ALL_FEATURES = CATEGORICAL_FEATURES + NUMERIC_FEATURES
 
 
 @dataclass
 class FeatureExtractor:
-    """Builds the per-token feature table shared by both predictor implementations.
+    """Строит таблицу признаков по токенам, общую для обеих реализаций предиктора.
 
-    Set `use_pos=False` to skip Natasha entirely (e.g. for a quick sanity run
-    without the POS-context features, or if natasha isn't installed) -- POS columns
-    are then filled with `UNK_POS`.
+    `use_pos=False` полностью пропускает Natasha (например, для быстрой проверки
+    без POS-контекстных признаков, или если natasha не установлена) -- POS-колонки
+    тогда заполняются `UNK_POS`, а производные от них признаки — нулями.
     """
 
     use_pos: bool = True
@@ -230,10 +286,16 @@ class FeatureExtractor:
             self._tagger = get_pos_tagger()
 
     def extract_sentence(self, tokens: list[str]) -> pd.DataFrame:
-        """Extract features for one sentence, given as ordered `label_raw` tokens.
+        """Извлекает признаки для одного предложения, заданного как токены `label_raw`.
 
-        `tokens` is exactly what `PausePredictor.predict` receives: raw tokens with
-        trailing punctuation, e.g. ["Я", "вышел", "из", "дома,", "когда", "стемнело."]
+        `tokens` -- ровно то, что получает `PausePredictor.predict`: сырые токены
+        с пунктуацией, например ["Я", "вышел", "из", "дома,", "когда", "стемнело."]
+
+        Args:
+            tokens: Токены одного предложения, по порядку.
+
+        Returns:
+            Таблица признаков, по одной строке на токен.
         """
         n = len(tokens)
         clean_tokens = [clean_letters(t) for t in tokens]
@@ -254,21 +316,28 @@ class FeatureExtractor:
                 'tokens_since_punct': since_punct[i],
                 'tokens_to_punct': to_punct[i],
             }
-            row.update(pos_context(pos_tags, i))
+            pos_ctx = pos_context(pos_tags, i)
+            row.update(pos_ctx)
+            row.update(derived_pos_features(pos_ctx))
             rows.append(row)
 
         return pd.DataFrame(rows)
 
     def extract_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Batch feature extraction over a `RUSLAN_pause_metadata.csv`-shaped frame.
+        """Батчевое извлечение признаков по фрейму формата `RUSLAN_pause_metadata.csv`.
 
-        Expects `id`, `label_raw` columns, with rows grouped and ordered by `id` (as
-        written by `prepare_training_data.py`). Pass the *whole* sentence for every
-        `id` present -- including its last word -- so position/context features are
-        computed correctly; excluding the last-word *row* from training/evaluation
-        is the caller's job (predictor modules), not this function's.
+        Ожидает колонки `id`, `label_raw`, строки сгруппированы и упорядочены по
+        `id` (как их пишет `prepare_training_data.py`). Передавать нужно *всё*
+        предложение целиком для каждого `id`, включая последнее слово -- иначе
+        неверно посчитаются признаки позиции/контекста; исключение строки
+        последнего слова из обучения/оценки -- ответственность вызывающего кода
+        (модули предикторов), не этой функции.
 
-        Row order of the input is preserved in the output.
+        Args:
+            df: Фрейм с колонками `id`, `label_raw`.
+
+        Returns:
+            `df` с добавленными колонками признаков; порядок строк сохраняется.
         """
         df = df.reset_index(drop=True)
         feat_rows: list = [None] * len(df)
@@ -283,11 +352,11 @@ class FeatureExtractor:
         return pd.concat([df, feat_df], axis=1)
 
 
-# --- feature caching --------------------------------------------------------------
-# Extracting POS features over the whole corpus (~250k tokens, one Natasha call per
-# sentence) takes a while. Run `build_features_cache.py` once to compute them and
-# write a cache file; `pause_predictor_linear.py` / `pause_predictor_catboost.py`
-# then load that cache instead of recomputing on every run.
+# --- кеширование признаков ---------------------------------------------------------
+# Извлечение POS-признаков по всему корпусу (~250к токенов, один вызов Natasha на
+# предложение) занимает время. `build_features_cache.py` считает их один раз и
+# пишет файл кеша; `pause_predictor_linear.py` / `pause_predictor_catboost.py`
+# затем загружают этот кеш вместо пересчёта на каждом запуске.
 
 FEATURE_CACHE_COLUMNS = ['id'] + ALL_FEATURES
 
@@ -295,11 +364,16 @@ FEATURE_CACHE_COLUMNS = ['id'] + ALL_FEATURES
 def extract_and_cache_dataframe(
     extractor: FeatureExtractor, df: pd.DataFrame, cache_path: str
 ) -> pd.DataFrame:
-    """Extract features for the whole `df` and write them to `cache_path`.
+    """Извлекает признаки для всего `df` и записывает их в `cache_path`.
 
-    Returns `df` with the feature columns attached (same as `extract_dataframe`),
-    so this can be used directly instead of `extract_dataframe` when you also want
-    to persist the result.
+    Args:
+        extractor: Настроенный `FeatureExtractor`.
+        df: Фрейм с колонками `id`, `label_raw`.
+        cache_path: Путь для файла кеша.
+
+    Returns:
+        `df` с прикреплёнными колонками признаков (как в `extract_dataframe`) --
+        можно использовать вместо неё, если результат нужно ещё и сохранить.
     """
     result = extractor.extract_dataframe(df)
     os.makedirs(os.path.dirname(cache_path) or '.', exist_ok=True)
@@ -308,13 +382,17 @@ def extract_and_cache_dataframe(
 
 
 def load_cached_features(df: pd.DataFrame, cache_path: str) -> Optional[pd.DataFrame]:
-    """Load a features cache written by `extract_and_cache_dataframe`, if present and
-    still matching `df` row-for-row (same `id` sequence).
+    """Загружает кеш признаков, если он есть и совпадает с `df` построчно (по `id`).
 
-    Returns `None` (rather than raising) if the cache is missing, stale, or from an
-    older feature set (missing a column added since, or carrying columns dropped
-    since), so callers fall back to recomputation instead of crashing or silently
-    using outdated features.
+    Args:
+        df: Текущий фрейм метаданных (без признаков).
+        cache_path: Путь к файлу кеша.
+
+    Returns:
+        `df` с признаками из кеша, либо `None` (вместо исключения), если кеш
+        отсутствует, устарел или посчитан для другого набора признаков
+        (не хватает добавленной колонки или есть удалённая) -- тогда вызывающий
+        код должен пересчитать признаки сам, а не молча использовать устаревшие.
     """
     if not os.path.exists(cache_path):
         return None

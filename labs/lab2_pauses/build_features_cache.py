@@ -1,17 +1,17 @@
-"""Build the features cache once, for the whole corpus — lab 2.
+"""Построение кеша фичей для всего корпуса — lab 2.
 
-Reads `data/RUSLAN_pause_metadata.csv`, extracts all features (including Natasha
-POS-tagging, the slow part) for every row, and writes them to
-`data/RUSLAN_pause_features.csv`. Run this once; `pause_predictor_linear.py` and
-`pause_predictor_catboost.py` will pick the cache up automatically on later runs and
-skip extraction entirely::
+Читает `data/RUSLAN_pause_metadata.csv`, извлекает все фичи (включая
+POS-разметку Natasha — самую медленную часть) для каждой строки и записывает их
+в `data/RUSLAN_pause_features.csv`. Запускается один раз; `pause_predictor.py`
+и `pause_predictor_catboost.py` подхватят кеш автоматически при последующих
+запусках и пропустят извлечение фичей::
 
     python build_features_cache.py
 
-Re-run it whenever `RUSLAN_pause_metadata.csv` changes (e.g. you re-ran
-`prepare_training_data.py` on new alignment) — the predictor scripts detect a
-mismatched cache and warn you to do so themselves, but it doesn't hurt to just
-remember to re-run this first.
+Перезапускать нужно каждый раз, когда меняется `RUSLAN_pause_metadata.csv`
+(например, после повторного запуска `prepare_training_data.py` на новом
+выравнивании) — скрипты-предикторы сами обнаруживают несовпадение кеша и
+предупреждают об этом, но лучше не забывать перезапускать этот скрипт первым.
 """
 import csv
 import time
@@ -25,6 +25,7 @@ FEATURES_CACHE_PATH = 'data/RUSLAN_pause_features.csv'
 
 
 def main() -> None:
+    """Извлекает фичи для всего корпуса и сохраняет их в файл кеша."""
     df = pd.read_csv(PAUSE_PREDICTOR_DATA, sep='|', quoting=csv.QUOTE_NONE)
     print(f'Loaded {len(df)} rows, {df.id.nunique()} sentences from {PAUSE_PREDICTOR_DATA}')
 

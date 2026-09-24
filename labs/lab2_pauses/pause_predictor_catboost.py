@@ -1,17 +1,19 @@
-"""Pause predictor — gradient boosting (CatBoost), lab 2.
+"""Предсказатель пауз на градиентном бустинге (CatBoost) — lab 2.
 
-Same design as `pause_predictor_linear.py` (see its module docstring for the full
-diagnosis): a hard rule override for strong punctuation, a coarse-grid F1-maximizing
-decision threshold instead of class balancing, duration regressed directly in
-seconds (no log transform -- it made MAE worse), and the `punct_class` /
-`tokens_since_punct` / `tokens_to_punct` feature set.
+Та же схема, что и в `pause_predictor_linear.py` (полное обоснование — в его
+докстринге): жёсткое правило для сильной пунктуации, длительность паузы
+регрессируется напрямую в секундах (без лог-трансформации — она ухудшала MAE),
+и набор фичей `punct_class` / `tokens_since_punct` / `tokens_to_punct`. Порог
+принятия решения зафиксирован константой (без перебора по сетке — см. п.7
+задания), т.к. подбор по F1 на валидации давал нестабильный выигрыш и усложнял
+пайплайн.
 
-Categorical features (`punct_class`, POS context) are passed to CatBoost directly,
-by name (`cat_features=...`) -- no one-hot encoding needed, CatBoost handles
-categoricals natively.
+Категориальные фичи (`punct_class`, POS-контекст) передаются в CatBoost
+напрямую по имени (`cat_features=...`) — one-hot не нужен, CatBoost работает
+с категориальными признаками нативно.
 
-Run as a script to fit on `train` and score on both folds, plus feature-importance
-and per-punctuation-class diagnostics::
+Запуск как скрипта обучает модель на `train` и считает метрики на обеих
+выборках, плюс важность фичей и диагностику по классам пунктуации::
 
     python pause_predictor_catboost.py
 """
@@ -23,50 +25,41 @@ import numpy as np
 import pandas as pd
 from catboost import CatBoostClassifier, CatBoostRegressor
 from sklearn.metrics import f1_score, precision_score, recall_score
-from sklearn.model_selection import train_test_split
 
 from features import (
-    FeatureExtractor, CATEGORICAL_FEATURES, NUMERIC_FEATURES, ALL_FEATURES,
+    ALL_FEATURES, CATEGORICAL_FEATURES, NUMERIC_FEATURES, FeatureExtractor,
     load_cached_features,
 )
 
 PAUSE_PREDICTOR_DATA = 'data/RUSLAN_pause_metadata.csv'
 FEATURES_CACHE_PATH = 'data/RUSLAN_pause_features.csv'
+
+# is_next_cconj / is_curr_noun_or_propn (п.8) считаются в features.py и уже
+# входят в NUMERIC_FEATURES -- отдельно их тут добавлять не нужно.
 FEATURE_COLUMNS = CATEGORICAL_FEATURES + NUMERIC_FEATURES
 
-# Punctuation classes with P(pause) >= ~0.9 in the EDA (period/multi-dot/!/?);
-# "closing" (~0.75) and "semicolon" (1 sample in the corpus) are deliberately left
-# out -- not reliable enough to force without the model's judgement.
+# Классы пунктуации с P(пауза) >= ~0.9 по EDA (точка/многоточие/!/?);
+# "closing" (~0.75) и "semicolon" (1 пример в корпусе) намеренно не форсируются --
+# недостаточно надёжны, чтобы переопределять решение модели.
 STRONG_PUNCT_CLASSES = frozenset({'period', 'ellipsis', 'exclaim', 'question'})
 
-# Coarse threshold grid: 0.10, 0.15, ..., 0.90 -- 17 points.
-THRESHOLD_GRID = np.round(np.arange(0.10, 0.90 + 1e-9, 0.05), 2)
-
-
-def _select_threshold(y_true: np.ndarray, y_proba: np.ndarray, grid=THRESHOLD_GRID) -> float:
-    """Threshold from `grid` maximizing F1 on the given (validation) set."""
-    best_threshold, best_f1 = 0.5, -1.0
-    for t in grid:
-        preds = (y_proba >= t).astype(int)
-        f1 = f1_score(y_true, preds, zero_division=0)
-        if f1 > best_f1:
-            best_f1, best_threshold = f1, t
-    return float(best_threshold)
+# Порог классификации зафиксирован (п.7 задания) -- без перебора по сетке.
+DECISION_THRESHOLD = 0.4
 
 
 class PausePredictorCatboost:
-    """Predicts pause placement and duration with CatBoost, a hard rule for strong
-    punctuation, and a tuned decision threshold.
+    """Предсказывает расположение и длительность пауз CatBoost'ом, с жёстким
+    правилом для сильной пунктуации и фиксированным порогом решения.
 
-    Same public contract as `pause_predictor.PausePredictor` (`predict`,
-    `predict_durations`), plus `fit()`.
+    Тот же публичный контракт, что и `pause_predictor.PausePredictor`
+    (`predict`, `predict_durations`), плюс `fit()`.
     """
 
     def __init__(self, use_pos: bool = True, strong_punct_classes: frozenset = STRONG_PUNCT_CLASSES,
-                 val_size: float = 0.15, random_state: int = 42, verbose: bool = False):
+                 threshold: float = DECISION_THRESHOLD, random_state: int = 42, verbose: bool = False):
         self.feature_extractor = FeatureExtractor(use_pos=use_pos)
         self.strong_punct_classes = strong_punct_classes
-        self.val_size = val_size
+        self.threshold = threshold
         self.random_state = random_state
 
         self.clf = CatBoostClassifier(
@@ -83,51 +76,52 @@ class PausePredictorCatboost:
             cat_features=CATEGORICAL_FEATURES,
             verbose=verbose,
         )
-        self.threshold = 0.5
         self._fitted = False
 
     def fit(self, train_df: pd.DataFrame) -> 'PausePredictorCatboost':
-        """Fit both models.
+        """Обучает классификатор и регрессор.
 
-        `train_df` must be `set == 'train'` rows, including every sentence's last
-        word (features need full-sentence context). The last-word exclusion from
-        training targets happens internally -- see `pause_predictor_linear.py` for
-        the same note, it applies identically here.
+        `train_df` должен содержать строки `set == 'train'`, включая последнее
+        слово каждого предложения (фичам нужен контекст всего предложения).
+        Исключение последнего слова из таргетов происходит внутри метода.
+
+        Args:
+            train_df: Обучающая выборка (сырые строки метаданных или уже
+                посчитанные фичи, если содержит все колонки `ALL_FEATURES`).
+
+        Returns:
+            self, с обученными `clf` и `reg`.
         """
         train_df = train_df.reset_index(drop=True)
         if set(ALL_FEATURES).issubset(train_df.columns):
             feats = train_df.copy()
         else:
             feats = self.feature_extractor.extract_dataframe(train_df)
-        # CatBoost categorical columns must not be float/NaN -- ensure plain strings.
+        # Категориальные колонки CatBoost не должны быть float/NaN -- приводим к строкам.
         feats[CATEGORICAL_FEATURES] = feats[CATEGORICAL_FEATURES].astype(str)
 
         trainable = train_df.is_last_word.values == 0
         X_cls = feats.loc[trainable, FEATURE_COLUMNS]
         y_cls = train_df.is_pause_after.values[trainable]
-
-        # Threshold picked on a held-out slice of train, then the final classifier
-        # is refit on the full trainable set so no data is wasted for the model
-        # itself -- only for threshold selection.
-        X_fit, X_val, y_fit, y_val = train_test_split(
-            X_cls, y_cls, test_size=self.val_size, random_state=self.random_state, stratify=y_cls,
-        )
-        self.clf.fit(X_fit, y_fit)
-        val_proba = self.clf.predict_proba(X_val)[:, 1]
-        self.threshold = _select_threshold(y_val, val_proba)
         self.clf.fit(X_cls, y_cls)
 
         tp_mask = trainable & (train_df.is_pause_after.values == 1)
         X_reg = feats.loc[tp_mask, FEATURE_COLUMNS]
-        y_reg = train_df.pause_duration.values[tp_mask]  # raw seconds, no log transform
+        y_reg = train_df.pause_duration.values[tp_mask]  # сырые секунды, без лог-трансформации
         self.reg.fit(X_reg, y_reg)
 
         self._fitted = True
         return self
 
     def _classify(self, feats: pd.DataFrame) -> np.ndarray:
-        """Probability-threshold classification + hard override for strong
-        punctuation, shared by `predict` and `predict_batch`.
+        """Классификация по порогу вероятности + жёсткое правило для сильной
+        пунктуации, общая для `predict` и `predict_batch`.
+
+        Args:
+            feats: Таблица фичей (уже с `pos_curr`/`pos_next1`).
+
+        Returns:
+            Массив `is_pause` (0/1) той же длины, что и `feats`.
         """
         feats = feats.copy()
         feats[CATEGORICAL_FEATURES] = feats[CATEGORICAL_FEATURES].astype(str)
@@ -140,6 +134,15 @@ class PausePredictorCatboost:
         return is_pause
 
     def _regress(self, feats: pd.DataFrame, is_pause: np.ndarray) -> np.ndarray:
+        """Регрессия длительности паузы там, где `is_pause == 1`.
+
+        Args:
+            feats: Таблица фичей.
+            is_pause: Маска предсказанных пауз (0/1).
+
+        Returns:
+            Массив длительностей (секунды), 0.0 там, где паузы нет.
+        """
         feats = feats.copy()
         feats[CATEGORICAL_FEATURES] = feats[CATEGORICAL_FEATURES].astype(str)
 
@@ -153,7 +156,7 @@ class PausePredictorCatboost:
         return pause_duration
 
     def predict(self, tokens: list[str] | np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Same contract as `pause_predictor.PausePredictor.predict`."""
+        """Тот же контракт, что `pause_predictor.PausePredictor.predict`."""
         if not self._fitted:
             raise RuntimeError('Call fit() before predict().')
 
@@ -164,7 +167,7 @@ class PausePredictorCatboost:
         return is_pause, pause_duration
 
     def predict_durations(self, tokens: list[str] | np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Same contract as `pause_predictor.PausePredictor.predict_durations`."""
+        """Тот же контракт, что `pause_predictor.PausePredictor.predict_durations`."""
         def expand_is_pause(token, is_pause):
             return [token, '<SIL>'] if bool(is_pause) else [token]
 
@@ -177,11 +180,17 @@ class PausePredictorCatboost:
         return tokens_w_pauses, durations_w_pauses
 
     def predict_batch(self, feats_df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-        """Vectorized prediction directly from a frame that already carries
-        `ALL_FEATURES` columns (e.g. loaded from the features cache).
+        """Векторизованное предсказание сразу из фрейма с колонками `ALL_FEATURES`
+        (например, загруженного из кеша фичей).
 
-        Skips feature extraction (no Natasha calls) entirely -- for fast bulk
-        evaluation over an already-featurized train/test set.
+        Пропускает извлечение фичей (без вызовов Natasha) -- для быстрой
+        массовой оценки на уже посчитанном train/test.
+
+        Args:
+            feats_df: Таблица фичей.
+
+        Returns:
+            Кортеж `(is_pause, pause_duration)`, как в `predict`.
         """
         if not self._fitted:
             raise RuntimeError('Call fit() before predict_batch().')
@@ -192,8 +201,11 @@ class PausePredictorCatboost:
 
 
 def _load_data_with_features() -> pd.DataFrame:
-    """Load the metadata, attach cached features if available (built by
-    `build_features_cache.py`), or fall back to extracting them now.
+    """Загружает метаданные и подключает закешированные фичи, если они есть
+    (собраны `build_features_cache.py`), иначе считает фичи заново.
+
+    Returns:
+        Таблица метаданных с фичами.
     """
     df = pd.read_csv(PAUSE_PREDICTOR_DATA, sep='|', quoting=csv.QUOTE_NONE)
 
@@ -215,7 +227,7 @@ if __name__ == '__main__':
     test_df = df[df.set == 'test'].reset_index(drop=True)
 
     pp = PausePredictorCatboost(verbose=100).fit(train_df)
-    print(f'Tuned decision threshold: {pp.threshold:.3f}')
+    print(f'Decision threshold (fixed): {pp.threshold:.3f}')
 
     # --- Диагностика 1: Feature Importance ---
     print("\n=== CatBoost Feature Importance ===")
