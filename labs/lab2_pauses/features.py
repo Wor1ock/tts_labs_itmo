@@ -1,414 +1,283 @@
-"""Извлечение признаков для предсказателя пауз — lab 2.
+"""Признаки для предсказателя пауз.
 
-Для каждого токена предложения строит признаки, на которых обучаются
-`PausePredictorLinear` и `PausePredictorCatboost`:
+Точки входа:
+    extract_sentence(tokens) -- инференс: признаки одного предложения (токены `label_raw`)
+    extract_features(df)     -- обучение: признаки по фрейму формата RUSLAN_pause_metadata.csv
+    load_features()          -- то же, но с кешем на диске (POS-разметка Natasha медленная)
 
-    punct_class     -- тип пунктуации сразу после токена (точка, запятая, ...)
-                        -- самый сильный признак (~37% важности в CatBoost)
-    word_len        -- число кириллических букв в токене
-    rel_pos         -- относительная позиция в предложении, 0.0 (первое) .. 1.0 (последнее)
-    pos_in_sentence -- абсолютная позиция, с нуля
-    sent_len        -- число токенов в предложении
-    is_last_word    -- 1 для последнего слова предложения (это признак; сама
-                        *метка* для этой строки всё равно исключается из
-                        обучения/оценки по протоколу лабы -- эта фильтрация
-                        происходит в модулях предикторов, не здесь)
-    pos_prev2, pos_prev1, pos_curr, pos_next1, pos_next2
-                    -- POS-теги текущего токена и соседей в окне +/-2,
-                       размечены Natasha (учитывает контекст всей
-                       последовательности, а не разметка слова изолированно)
-    tokens_since_punct
-                    -- сколько токенов назад была последняя пунктуация (0, если
-                       *предыдущий* токен был с пунктуацией; иначе считается от
-                       начала предложения) -- насколько глубоко мы внутри
-                       непрерывного, без запятых, отрезка предложения
-    tokens_to_punct -- сколько токенов до *следующей* пунктуации (0, если сам
-                       текущий токен с пунктуацией; до конца предложения, если
-                       дальше пунктуации нет) -- та же идея, но вперёд
-    is_next_cconj   -- 1, если POS следующего токена -- сочинительный союз
-                       (CCONJ); маркер границы клауз перед союзом
-    is_curr_noun_or_propn
-                    -- 1, если POS текущего токена -- существительное или
-                       имя собственное (NOUN/PROPN); маркер конца именной группы
+Построить кеш заранее (пересчитывается сам, если устарел; чтобы форсировать -- удалите файл кеша)::
 
-Две точки входа:
-    FeatureExtractor.extract_sentence(tokens)   -- инференс, одно предложение
-    FeatureExtractor.extract_dataframe(df)      -- обучение, батчем по формату
-                                                    RUSLAN_pause_metadata.csv
-
-Кеширование: извлечение POS-признаков по всему корпусу медленное (Natasha
-вызывается на каждое предложение). `extract_and_cache_dataframe` /
-`load_cached_features` внизу модуля позволяют посчитать признаки один раз (см.
-`build_features_cache.py`), а `pause_predictor_linear.py` /
-`pause_predictor_catboost.py` — загрузить результат вместо пересчёта на
-каждом запуске.
+    uv run python features.py
 """
-from __future__ import annotations
-
 import csv
-import os
 import re
-from dataclasses import dataclass, field
+from collections import Counter
 from functools import lru_cache
-from typing import Optional
 
 import pandas as pd
+from natasha import Doc, NewsEmbedding, NewsMorphTagger, Segmenter
+from tqdm.auto import tqdm
 
-try:
-    from natasha import Doc, MorphVocab, NewsEmbedding, NewsMorphTagger, Segmenter
-    _NATASHA_AVAILABLE = True
-except ImportError:  # pragma: no cover - окружение без natasha
-    _NATASHA_AVAILABLE = False
+from paths import FEATURES_CACHE_PATH, PAUSE_METADATA_PATH
 
+# --- пунктуация ---------------------------------------------------------------------
 
-# --- классификация пунктуации ----------------------------------------------------
-# Те же категории, что использовались в EDA (report.md / eda.ipynb §5) -- чтобы
-# распределения признаков совпадали с анализом, который их мотивировал.
-
-_PUNCT_PATTERNS = [
-    (re.compile(r'\.\.\.$|…$'), 'ellipsis'),
-    (re.compile(r'[.]$'), 'period'),
-    (re.compile(r'[,]$'), 'comma'),
-    (re.compile(r'[;]$'), 'semicolon'),
-    (re.compile(r'[:]$'), 'colon'),
-    (re.compile(r'[!]$'), 'exclaim'),
-    (re.compile(r'[?]$'), 'question'),
-    (re.compile(r'[—-]$'), 'dash'),
-    (re.compile(r'[)\]»"]$'), 'closing'),
-]
 NO_PUNCT = 'none'
 OTHER_PUNCT = 'other'
+_PUNCT_BY_LAST_CHAR = {
+    '.': 'period', ',': 'comma', ';': 'semicolon', ':': 'colon', '!': 'exclaim',
+    '?': 'question', '—': 'dash', '-': 'dash',
+    ')': 'closing', ']': 'closing', '»': 'closing', '"': 'closing',
+}
+# Классы, закрывающие грамматическое предложение: по ним запись `id` режется на предложения.
+SENTENCE_BOUNDARY_PUNCT = frozenset({'period', 'ellipsis', 'exclaim', 'question'})
 
-_LETTERS_RE = re.compile(r'[^а-яё]')
+_QUOTE_CHARS = frozenset('«»"“”')
+_VOWELS = frozenset('аеёиоуыэюя')  # в русском слог = гласная
+_NON_LETTERS_RE = re.compile(r'[^а-яё]')
 
-UNK_POS = 'UNK'    # несовпадение токенизации Natasha -- запасное значение
-PAD_POS = 'NONE'   # контекст за границами предложения (начало/конец)
-CONTEXT_WINDOW = 2  # слов до/после
-
-# POS-теги, из которых считаются производные бинарные признаки
-_CCONJ_TAG = 'CCONJ'
-_NOUN_LIKE_TAGS = frozenset({'NOUN', 'PROPN'})
-
-
-def punct_class(label_raw: str) -> str:
-    """Определяет тип пунктуации после токена по его форме `label_raw`.
-
-    Args:
-        label_raw: Токен с исходной пунктуацией (например, "дома,").
-
-    Returns:
-        Название класса пунктуации (`period`, `comma`, ... , `NO_PUNCT` или
-        `OTHER_PUNCT`).
-    """
-    if not isinstance(label_raw, str):
-        return NO_PUNCT
-    s = label_raw.strip()
-    for pattern, name in _PUNCT_PATTERNS:
-        if pattern.search(s):
-            return name
-    return NO_PUNCT if re.search(r'[а-яёa-z]$', s.lower()) else OTHER_PUNCT
+PAD = '<PAD>'    # соседа нет (граница записи); в словах и в классах пунктуации
+UNK_WORD = '<UNK>'
+PAD_POS = 'NONE'
+MIN_WORD_COUNT = 2  # слова, встречающиеся в train реже, -> UNK_WORD
 
 
 def clean_letters(label: str) -> str:
-    """Оставляет только кириллические буквы (убирает пунктуацию/цифры/пробелы)."""
-    if not isinstance(label, str):
-        return ''
-    return _LETTERS_RE.sub('', label.lower())
+    """Только кириллические буквы в нижнем регистре."""
+    return _NON_LETTERS_RE.sub('', label.lower()) if isinstance(label, str) else ''
 
 
-def word_len(label: str) -> int:
-    """Число кириллических букв в токене."""
-    return len(clean_letters(label))
+def punct_class(label_raw: str) -> str:
+    """Класс пунктуации в конце токена (`comma`, `period`, ...; `none` -- нет, `other` -- прочее)."""
+    if not isinstance(label_raw, str):
+        return NO_PUNCT
+    s = label_raw.strip()
+    if s.endswith(('...', '…')):
+        return 'ellipsis'
+    if not s:
+        return NO_PUNCT
+    if s[-1] in _PUNCT_BY_LAST_CHAR:
+        return _PUNCT_BY_LAST_CHAR[s[-1]]
+    return NO_PUNCT if re.match(r'[а-яёa-z]', s[-1].lower()) else OTHER_PUNCT
 
 
-def punct_distances(punct_classes: list[str]) -> tuple[list[int], list[int]]:
-    """Расстояние (в токенах) до ближайшей пунктуации, назад и вперёд.
+# --- токенизация: пунктуация остаётся приклеенной к словам ---------------------------
+# Открывающие символы уходят в ПРЕФИКС следующего слова («Дорал), всё остальное между
+# словами (запятая, », —, …) -- в хвост предыдущего. Используется и при подготовке
+# обучающих данных (`split_gap`), и в инференсе (`tokenize_text`).
+OPENING_CHARS = '«„“‘([{"\''
+_OPENING_TAIL_RE = re.compile('[' + re.escape(OPENING_CHARS) + ']+$')
 
-    `tokens_since_punct[i]` -- сколько токенов прошло с последнего
-    пунктуированного токена *до* i (0 значит, что непосредственно предыдущий
-    токен был с пунктуацией); от начала предложения, если пунктуации раньше не было.
 
-    `tokens_to_punct[i]` -- сколько токенов до следующего пунктуированного
-    токена *начиная с* i (0 значит, что сам токен с пунктуацией); до конца
-    предложения, если дальше пунктуации нет.
+def split_gap(gap: str) -> tuple[str, str]:
+    """Промежуток между словами -> (хвост предыдущего слова, префикс следующего)."""
+    m = _OPENING_TAIL_RE.search(gap)
+    prefix = m.group() if m else ''
+    return gap[:len(gap) - len(prefix)].strip(), prefix
 
-    Args:
-        punct_classes: Классы пунктуации всех токенов предложения, по порядку.
 
-    Returns:
-        Кортеж `(tokens_since_punct, tokens_to_punct)`, оба длиной `len(punct_classes)`.
+def tokenize_text(text: str) -> list[str]:
+    """Текст -> токены `label_raw` (слово + пунктуация вокруг), как в обучающих данных.
+
+    Делит по пробелам, но отдельно стоящие знаки (`«`, `—`, `…`) приклеивает:
+    открывающие -- к следующему слову, остальные -- к предыдущему.
     """
-    n = len(punct_classes)
-    since = [0] * n
-    to = [0] * n
-
-    last_punct_idx = -1  # виртуальная граница пунктуации до начала предложения
-    for i in range(n):
-        since[i] = i - last_punct_idx - 1
-        if punct_classes[i] != NO_PUNCT:
-            last_punct_idx = i
-
-    next_punct_idx = n  # виртуальная граница пунктуации после конца предложения
-    for i in range(n - 1, -1, -1):
-        if punct_classes[i] != NO_PUNCT:
-            next_punct_idx = i
-        to[i] = next_punct_idx - i
-
-    return since, to
+    tokens: list[str] = []
+    prefix = ''
+    for w in text.split():
+        if set(w) <= set(OPENING_CHARS):
+            prefix += w
+        elif tokens and not any(c.isalnum() for c in w):
+            tokens[-1] += ' ' + w
+        else:
+            tokens.append(prefix + w)
+            prefix = ''
+    return tokens
 
 
-# --- POS-теггинг (Natasha) --------------------------------------------------------
-
-class PosTagger:
-    """Обёртка над морфологическим пайплайном Natasha.
-
-    `NewsEmbedding` -- тяжёлая модель (скачивается при первом использовании,
-    затем кешируется локально) -- собирается один раз на экземпляр `PosTagger`
-    и переиспользуется, а не пересобирается на каждое предложение.
-    """
-
-    def __init__(self):
-        if not _NATASHA_AVAILABLE:
-            raise ImportError(
-                "natasha is required for POS features. Install with `pip install natasha`."
-            )
-        self._segmenter = Segmenter()
-        self._morph_vocab = MorphVocab()
-        self._emb = NewsEmbedding()
-        self._morph_tagger = NewsMorphTagger(self._emb)
-
-    def tag_sentence(self, tokens: list[str]) -> list[str]:
-        """POS-разметка предложения из "чистых" токенов (только буквы, без пунктуации).
-
-        Собирает из токенов строку и прогоняет через сегментацию + морфологический
-        тэггер Natasha (именно это делает разметку *контекстно-зависимой* -- не
-        пословный lookup), затем выравнивает полученные теги обратно на входные
-        токены по порядку.
-
-        Если токенизация Natasha не совпадает 1:1 со входом (редко -- например,
-        необычный токен разбился иначе), несовпадение не роняет вызов, а
-        дополняется/обрезается `UNK_POS`, чтобы одно странное предложение не
-        обрушивало прогон по всему корпусу.
-
-        Args:
-            tokens: Слова предложения без пунктуации.
-
-        Returns:
-            Список POS-тегов, той же длины, что и `tokens`.
-        """
-        if not tokens:
-            return []
-
-        text = ' '.join(t for t in tokens if t)
-        doc = Doc(text)
-        doc.segment(self._segmenter)
-        doc.tag_morph(self._morph_tagger)
-
-        word_tags = [t.pos for t in doc.tokens if t.pos != 'PUNCT']
-
-        n = len(tokens)
-        if len(word_tags) == n:
-            return word_tags
-        if len(word_tags) > n:
-            return word_tags[:n]
-        return word_tags + [UNK_POS] * (n - len(word_tags))
-
+# --- POS-теггинг (Natasha) ----------------------------------------------------------
 
 @lru_cache(maxsize=1)
-def get_pos_tagger() -> PosTagger:
-    """Синглтон на процесс -- не даёт повторно грузить модель эмбеддингов."""
-    return PosTagger()
+def _natasha():
+    """Тяжёлые модели грузим один раз на процесс."""
+    return Segmenter(), NewsMorphTagger(NewsEmbedding())
 
 
-def pos_context(pos_tags: list[str], idx: int, window: int = CONTEXT_WINDOW) -> dict:
-    """POS-контекст +/- `window` вокруг позиции `idx`, за границами -- `PAD_POS`.
+def pos_tags(words: list[str]) -> list[str]:
+    """POS-теги слов (по контексту всего предложения, не пословно), len(result) == len(words).
 
-    Args:
-        pos_tags: POS-теги всего предложения.
-        idx: Позиция токена, для которого строится контекст.
-        window: Размер окна в каждую сторону.
-
-    Returns:
-        Словарь с ключами `pos_prev2, pos_prev1, pos_curr, pos_next1, pos_next2`
-        (для window=2).
+    Если токенизация Natasha не совпала 1:1, теги обрезаются/добиваются `X`,
+    чтобы одно странное предложение не роняло прогон по корпусу.
     """
-    feats = {}
-    for offset in range(-window, window + 1):
-        j = idx + offset
-        if offset == 0:
-            key = 'pos_curr'
-        else:
-            key = f'pos_{"prev" if offset < 0 else "next"}{abs(offset)}'
-        feats[key] = pos_tags[j] if 0 <= j < len(pos_tags) else PAD_POS
-    return feats
+    if not words:
+        return []
+    segmenter, tagger = _natasha()
+    doc = Doc(' '.join(w for w in words if w))
+    doc.segment(segmenter)
+    doc.tag_morph(tagger)
+    tags = [t.pos for t in doc.tokens if t.pos != 'PUNCT']
+    return (tags + ['X'] * len(words))[:len(words)]
 
 
-def derived_pos_features(pos_ctx: dict) -> dict:
-    """Бинарные признаки, производные от POS-контекста токена.
+# --- признаки -----------------------------------------------------------------------
 
-    Args:
-        pos_ctx: Словарь POS-контекста из `pos_context` (нужны ключи `pos_curr`,
-            `pos_next1`).
-
-    Returns:
-        Словарь с ключами `is_next_cconj` (следующий токен -- союз CCONJ) и
-        `is_curr_noun_or_propn` (текущий токен -- NOUN/PROPN), значения 0/1.
-    """
-    return {
-        'is_next_cconj': int(pos_ctx.get('pos_next1') == _CCONJ_TAG),
-        'is_curr_noun_or_propn': int(pos_ctx.get('pos_curr') in _NOUN_LIKE_TAGS),
-    }
-
-
-CATEGORICAL_FEATURES = ['punct_class', 'pos_prev2', 'pos_prev1', 'pos_curr', 'pos_next1', 'pos_next2']
+CATEGORICAL_FEATURES = [
+    'punct_class', 'pos_prev2', 'pos_prev1', 'pos_curr', 'pos_next1', 'pos_next2',
+    'prev_word', 'next_word', 'next_punct_class',
+]
 NUMERIC_FEATURES = [
-    'word_len', 'rel_pos', 'pos_in_sentence', 'sent_len',
-    'tokens_since_punct', 'tokens_to_punct',
-    'is_next_cconj', 'is_curr_noun_or_propn',
+    'word_len', 'n_syllables', 'rel_pos', 'pos_in_sentence', 'sent_len',
+    'tokens_since_punct', 'tokens_to_punct', 'tokens_to_end',
+    'is_next_cconj', 'next_is_stop', 'is_curr_noun_or_propn', 'is_curr_propn', 'has_quote_mark',
+    'is_not_last_sentence', 'n_sentences_in_id',
+    'tokens_to_next_comma', 'commas_left_in_clause',
 ]
 ALL_FEATURES = CATEGORICAL_FEATURES + NUMERIC_FEATURES
 
 
-@dataclass
-class FeatureExtractor:
-    """Строит таблицу признаков по токенам, общую для обеих реализаций предиктора.
+def extract_sentence(tokens: list[str]) -> pd.DataFrame:
+    """Признаки одного предложения: по строке на токен `label_raw` (например "дома,").
 
-    `use_pos=False` полностью пропускает Natasha (например, для быстрой проверки
-    без POS-контекстных признаков, или если natasha не установлена) -- POS-колонки
-    тогда заполняются `UNK_POS`, а производные от них признаки — нулями.
+    `is_last_word` признаком намеренно нет: он восстанавливается из `rel_pos == 1.0`.
+    Колонка остаётся в метаданных только чтобы исключать последнее слово из
+    обучения и оценки.
     """
+    n = len(tokens)
+    if n == 0:
+        return pd.DataFrame(columns=ALL_FEATURES)
 
-    use_pos: bool = True
-    _tagger: Optional[PosTagger] = field(default=None, init=False, repr=False)
+    clean = [clean_letters(t) for t in tokens]
+    pcs = [punct_class(t) for t in tokens]
+    pos = [PAD_POS] * 2 + pos_tags(clean) + [PAD_POS] * 2  # окно +/-2 вокруг токена
 
-    def __post_init__(self):
-        if self.use_pos:
-            self._tagger = get_pos_tagger()
+    # Вперёд: расстояние от последней пунктуации и номер грамматического предложения.
+    # Один `id` -- не обязательно одно предложение, режем по сильной пунктуации.
+    since = [0] * n
+    sent_idx = [0] * n
+    last_punct, sent = -1, 0
+    for i, pc in enumerate(pcs):
+        since[i] = i - last_punct - 1
+        sent_idx[i] = sent
+        if pc != NO_PUNCT:
+            last_punct = i
+        if pc in SENTENCE_BOUNDARY_PUNCT:
+            sent += 1
+    n_sent = sent_idx[-1] + 1
 
-    def extract_sentence(self, tokens: list[str]) -> pd.DataFrame:
-        """Извлекает признаки для одного предложения, заданного как токены `label_raw`.
+    # Назад: расстояния до ближайшей пунктуации / запятой / конца предложения.
+    # commas_left_in_clause: 0 у запятой -- граница клаузы (последняя запятая перед
+    # точкой), >=1 -- перечисление (впереди ещё запятые).
+    to_punct, to_comma, commas_left, to_end = [0] * n, [0] * n, [0] * n, [0] * n
+    next_punct = next_comma = n
+    sent_end = n - 1
+    commas_ahead = 0
+    for i in range(n - 1, -1, -1):
+        pc = pcs[i]
+        if pc in SENTENCE_BOUNDARY_PUNCT:
+            sent_end = i
+        if pc != NO_PUNCT:
+            next_punct = i
+        if pc == 'comma':
+            next_comma = i
+        to_punct[i] = next_punct - i
+        to_comma[i] = next_comma - i
+        to_end[i] = sent_end - i
+        commas_left[i] = commas_ahead
+        if pc == 'comma':
+            commas_ahead += 1
+        if pc in SENTENCE_BOUNDARY_PUNCT:
+            commas_ahead = 0
 
-        `tokens` -- ровно то, что получает `PausePredictor.predict`: сырые токены
-        с пунктуацией, например ["Я", "вышел", "из", "дома,", "когда", "стемнело."]
-
-        Args:
-            tokens: Токены одного предложения, по порядку.
-
-        Returns:
-            Таблица признаков, по одной строке на токен.
-        """
-        n = len(tokens)
-        clean_tokens = [clean_letters(t) for t in tokens]
-        punct_classes = [punct_class(t) for t in tokens]
-        since_punct, to_punct = punct_distances(punct_classes)
-
-        pos_tags = self._tagger.tag_sentence(clean_tokens) if self.use_pos else [UNK_POS] * n
-
-        rows = []
-        for i, tok in enumerate(tokens):
-            row = {
-                'punct_class': punct_classes[i],
-                'word_len': word_len(tok),
-                'rel_pos': i / max(n - 1, 1),
-                'pos_in_sentence': i,
-                'sent_len': n,
-                'is_last_word': int(i == n - 1),
-                'tokens_since_punct': since_punct[i],
-                'tokens_to_punct': to_punct[i],
-            }
-            pos_ctx = pos_context(pos_tags, i)
-            row.update(pos_ctx)
-            row.update(derived_pos_features(pos_ctx))
-            rows.append(row)
-
-        return pd.DataFrame(rows)
-
-    def extract_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Батчевое извлечение признаков по фрейму формата `RUSLAN_pause_metadata.csv`.
-
-        Ожидает колонки `id`, `label_raw`, строки сгруппированы и упорядочены по
-        `id` (как их пишет `prepare_training_data.py`). Передавать нужно *всё*
-        предложение целиком для каждого `id`, включая последнее слово -- иначе
-        неверно посчитаются признаки позиции/контекста; исключение строки
-        последнего слова из обучения/оценки -- ответственность вызывающего кода
-        (модули предикторов), не этой функции.
-
-        Args:
-            df: Фрейм с колонками `id`, `label_raw`.
-
-        Returns:
-            `df` с добавленными колонками признаков; порядок строк сохраняется.
-        """
-        df = df.reset_index(drop=True)
-        feat_rows: list = [None] * len(df)
-
-        for _, group in df.groupby('id', sort=False):
-            tokens = group.label_raw.tolist()
-            feats = self.extract_sentence(tokens)
-            for local_i, orig_i in enumerate(group.index):
-                feat_rows[orig_i] = feats.iloc[local_i]
-
-        feat_df = pd.DataFrame(feat_rows).reset_index(drop=True)
-        return pd.concat([df, feat_df], axis=1)
-
-
-# --- кеширование признаков ---------------------------------------------------------
-# Извлечение POS-признаков по всему корпусу (~250к токенов, один вызов Natasha на
-# предложение) занимает время. `build_features_cache.py` считает их один раз и
-# пишет файл кеша; `pause_predictor_linear.py` / `pause_predictor_catboost.py`
-# затем загружают этот кеш вместо пересчёта на каждом запуске.
-
-FEATURE_CACHE_COLUMNS = ['id'] + ALL_FEATURES
+    feats = pd.DataFrame({
+        'punct_class': pcs,
+        'word_len': [len(w) for w in clean],
+        'n_syllables': [sum(ch in _VOWELS for ch in w) for w in clean],
+        'rel_pos': [i / max(n - 1, 1) for i in range(n)],
+        'pos_in_sentence': list(range(n)),
+        'sent_len': n,
+        'tokens_since_punct': since,
+        'tokens_to_punct': to_punct,
+        'tokens_to_end': to_end,
+        # редкие слова заменяются на <UNK> уже при обучении (`apply_word_vocab`);
+        # в кеше лежат сырые слова, пустая строка -- токен без кириллицы
+        'prev_word': [PAD] + clean[:-1],
+        'next_word': clean[1:] + [PAD],
+        'next_punct_class': pcs[1:] + [PAD],
+        'has_quote_mark': [int(isinstance(t, str) and any(c in _QUOTE_CHARS for c in t)) for t in tokens],
+        'is_not_last_sentence': [int(s < n_sent - 1) for s in sent_idx],
+        'n_sentences_in_id': n_sent,
+        'tokens_to_next_comma': to_comma,
+        'commas_left_in_clause': commas_left,
+        'pos_prev2': pos[0:n],
+        'pos_prev1': pos[1:n + 1],
+        'pos_curr': pos[2:n + 2],
+        'pos_next1': pos[3:n + 3],
+        'pos_next2': pos[4:n + 4],
+    })
+    feats['is_next_cconj'] = (feats.pos_next1 == 'CCONJ').astype(int)
+    feats['next_is_stop'] = feats.pos_next1.isin(['ADP', 'CCONJ', 'SCONJ']).astype(int)
+    feats['is_curr_noun_or_propn'] = feats.pos_curr.isin(['NOUN', 'PROPN']).astype(int)
+    feats['is_curr_propn'] = (feats.pos_curr == 'PROPN').astype(int)
+    return feats[ALL_FEATURES]
 
 
-def extract_and_cache_dataframe(
-    extractor: FeatureExtractor, df: pd.DataFrame, cache_path: str
-) -> pd.DataFrame:
-    """Извлекает признаки для всего `df` и записывает их в `cache_path`.
+def extract_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Признаки по фрейму с колонками `id`, `label_raw`; возвращает `df` + колонки признаков.
 
-    Args:
-        extractor: Настроенный `FeatureExtractor`.
-        df: Фрейм с колонками `id`, `label_raw`.
-        cache_path: Путь для файла кеша.
-
-    Returns:
-        `df` с прикреплёнными колонками признаков (как в `extract_dataframe`) --
-        можно использовать вместо неё, если результат нужно ещё и сохранить.
+    Предложение нужно передавать целиком, включая последнее слово, иначе
+    неверно посчитаются признаки позиции и контекста.
     """
-    result = extractor.extract_dataframe(df)
-    os.makedirs(os.path.dirname(cache_path) or '.', exist_ok=True)
-    result[FEATURE_CACHE_COLUMNS].to_csv(cache_path, sep='|', index=False, quoting=csv.QUOTE_NONE)
+    df = df.reset_index(drop=True)
+    # Строки одного `id` идут подряд (так пишет prepare_training_data.py), поэтому
+    # порядок групп совпадает с порядком строк.
+    parts = [extract_sentence(g.label_raw.tolist())
+             for _, g in tqdm(df.groupby('id', sort=False), desc='Извлечение признаков')]
+    return pd.concat([df, pd.concat(parts, ignore_index=True)], axis=1)
+
+
+def load_features(metadata_path=PAUSE_METADATA_PATH, cache_path=FEATURES_CACHE_PATH) -> pd.DataFrame:
+    """Метаданные + признаки. Берёт кеш, если он совпадает с метаданными, иначе пересчитывает и пишет кеш."""
+    df = pd.read_csv(metadata_path, sep='|', quoting=csv.QUOTE_NONE)
+
+    # escapechar нужен: токены могут содержать кавычку, а csv с QUOTE_NONE без него на ней падает.
+    csv_kwargs = dict(sep='|', quoting=csv.QUOTE_NONE, escapechar='\\')
+
+    if cache_path.exists():
+        cached = pd.read_csv(cache_path, keep_default_na=False, **csv_kwargs)
+        if (set(cached.columns) == set(ALL_FEATURES) | {'id'}
+                and len(cached) == len(df) and (cached.id.values == df.id.values).all()):
+            return pd.concat([df, cached[ALL_FEATURES]], axis=1)
+        print(f'Кеш {cache_path} устарел (другие признаки или данные) -- пересчитываю.')
+
+    result = extract_features(df)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    result[['id'] + ALL_FEATURES].to_csv(cache_path, index=False, **csv_kwargs)
     return result
 
 
-def load_cached_features(df: pd.DataFrame, cache_path: str) -> Optional[pd.DataFrame]:
-    """Загружает кеш признаков, если он есть и совпадает с `df` построчно (по `id`).
+# --- словарь слов -------------------------------------------------------------------
+# `prev_word`/`next_word` -- категориальные признаки с огромной кардинальностью.
+# Слова-одиночки ничему не учат, только раздувают память и переобучают модель.
+# Словарь строится ТОЛЬКО по train (иначе в test утекает информация); всё вне
+# словаря -- и редкие train-слова, и незнакомые слова при инференсе, и токены без
+# кириллицы -- превращается в `<UNK>`.
 
-    Args:
-        df: Текущий фрейм метаданных (без признаков).
-        cache_path: Путь к файлу кеша.
+def build_word_vocab(labels, min_count: int = MIN_WORD_COUNT) -> frozenset:
+    """Слова (только буквы) из `labels`, встречающиеся не реже `min_count` раз."""
+    counts = Counter(clean_letters(t) for t in labels)
+    counts.pop('', None)
+    return frozenset(w for w, c in counts.items() if c >= min_count)
 
-    Returns:
-        `df` с признаками из кеша, либо `None` (вместо исключения), если кеш
-        отсутствует, устарел или посчитан для другого набора признаков
-        (не хватает добавленной колонки или есть удалённая) -- тогда вызывающий
-        код должен пересчитать признаки сам, а не молча использовать устаревшие.
-    """
-    if not os.path.exists(cache_path):
-        return None
 
-    df = df.reset_index(drop=True)
-    cached = pd.read_csv(cache_path, sep='|', quoting=csv.QUOTE_NONE)
+def apply_word_vocab(feats: pd.DataFrame, vocab) -> pd.DataFrame:
+    """Копия `feats`, где слова вне `vocab` в `prev_word`/`next_word` заменены на `<UNK>` (`<PAD>` остаётся)."""
+    feats = feats.copy()
+    for col in ('prev_word', 'next_word'):
+        s = feats[col].astype(str)
+        feats[col] = s.where(s.isin(vocab) | (s == PAD), UNK_WORD)
+    return feats
 
-    if set(ALL_FEATURES) != set(cached.columns) - {'id'}:
-        print(f'[features] Cache at {cache_path} has a different feature set than the '
-              f'current code -- ignoring it, will recompute. Re-run build_features_cache.py '
-              f'to refresh it.')
-        return None
 
-    if len(cached) != len(df) or not (cached.id.values == df.id.values).all():
-        print(f'[features] Cache at {cache_path} does not match the current data '
-              f'(different length or row order) -- ignoring it, will recompute.')
-        return None
-
-    return pd.concat([df, cached[ALL_FEATURES].reset_index(drop=True)], axis=1)
+if __name__ == '__main__':
+    df = load_features()
+    print(f'Признаки готовы: {len(df)} строк, кеш -- {FEATURES_CACHE_PATH}')
