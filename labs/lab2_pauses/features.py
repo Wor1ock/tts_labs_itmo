@@ -125,14 +125,13 @@ CATEGORICAL_FEATURES = [
     'punct_class', 'pos_prev2', 'pos_prev1', 'pos_curr', 'pos_next1', 'pos_next2',
     'prev_word', 'next_word', 'next_punct_class',
 ]
+BINARY_FEATURES = ['has_quote_mark']
 NUMERIC_FEATURES = [
     'word_len', 'n_syllables', 'rel_pos', 'pos_in_sentence', 'sent_len',
     'tokens_since_punct', 'tokens_to_punct', 'tokens_to_end',
-    'is_next_cconj', 'next_is_stop', 'is_curr_noun_or_propn', 'is_curr_propn', 'has_quote_mark',
-    'is_not_last_sentence', 'n_sentences_in_id',
-    'tokens_to_next_comma', 'commas_left_in_clause',
+    'n_sentences_in_id', 'tokens_to_next_comma', 'commas_left_in_clause',
 ]
-ALL_FEATURES = CATEGORICAL_FEATURES + NUMERIC_FEATURES
+ALL_FEATURES = CATEGORICAL_FEATURES + BINARY_FEATURES + NUMERIC_FEATURES
 
 
 def extract_sentence(tokens: list[str]) -> pd.DataFrame:
@@ -204,7 +203,6 @@ def extract_sentence(tokens: list[str]) -> pd.DataFrame:
         'next_word': clean[1:] + [PAD],
         'next_punct_class': pcs[1:] + [PAD],
         'has_quote_mark': [int(isinstance(t, str) and any(c in _QUOTE_CHARS for c in t)) for t in tokens],
-        'is_not_last_sentence': [int(s < n_sent - 1) for s in sent_idx],
         'n_sentences_in_id': n_sent,
         'tokens_to_next_comma': to_comma,
         'commas_left_in_clause': commas_left,
@@ -214,10 +212,6 @@ def extract_sentence(tokens: list[str]) -> pd.DataFrame:
         'pos_next1': pos[3:n + 3],
         'pos_next2': pos[4:n + 4],
     })
-    feats['is_next_cconj'] = (feats.pos_next1 == 'CCONJ').astype(int)
-    feats['next_is_stop'] = feats.pos_next1.isin(['ADP', 'CCONJ', 'SCONJ']).astype(int)
-    feats['is_curr_noun_or_propn'] = feats.pos_curr.isin(['NOUN', 'PROPN']).astype(int)
-    feats['is_curr_propn'] = (feats.pos_curr == 'PROPN').astype(int)
     return feats[ALL_FEATURES]
 
 
