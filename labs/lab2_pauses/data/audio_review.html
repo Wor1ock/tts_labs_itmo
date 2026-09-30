@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><title>Аудио-обзор ошибок предиктора пауз</title>
+<style>
+  body { font-family: sans-serif; max-width: 900px; margin: 24px auto; padding: 0 16px; }
+  h2 { margin-top: 32px; }
+  .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px 16px; margin-bottom: 12px; }
+  .card-header { font-weight: 600; margin-bottom: 4px; }
+  .card-body { color: #555; margin-bottom: 8px; font-size: 14px; }
+  audio { width: 100%; }
+</style></head>
+<body>
+<h1>Аудио-обзор ошибок предиктора пауз</h1>
+<p>Текст токена и аудио файла целиком -- чтобы на слух проверить, не технический ли это шум
+(монтажный стык, обрезанное слово), прежде чем придумывать новые признаки.</p>
+<h2>Худшие по MAE (test)</h2>
+
+        <div class="card">
+          <div class="card-header">017285_RUSLAN — <code>сть…</code> (ellipsis)</div>
+          <div class="card-body">Факт: 1590мс, предсказано: 99мс</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/017285_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">020155_RUSLAN — <code>прихорашиваюсь.</code> (period)</div>
+          <div class="card-body">Факт: 1020мс, предсказано: 154мс</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/020155_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">019980_RUSLAN — <code>«Зощенко—</code> (dash)</div>
+          <div class="card-body">Факт: 890мс, предсказано: 116мс</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/019980_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">021195_RUSLAN — <code>прозу.</code> (period)</div>
+          <div class="card-body">Факт: 920мс, предсказано: 150мс</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/021195_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">021710_RUSLAN — <code>Лансмана.</code> (period)</div>
+          <div class="card-body">Факт: 970мс, предсказано: 250мс</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/021710_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">015265_RUSLAN — <code>чисел.</code> (period)</div>
+          <div class="card-body">Факт: 910мс, предсказано: 198мс</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/015265_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">019860_RUSLAN — <code>генуэзски» —</code> (dash)</div>
+          <div class="card-body">Факт: 850мс, предсказано: 171мс</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/019860_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">020740_RUSLAN — <code>Макогоненко.</code> (period)</div>
+          <div class="card-body">Факт: 850мс, предсказано: 180мс</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/020740_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">007250_RUSLAN — <code>«Райа».</code> (period)</div>
+          <div class="card-body">Факт: 870мс, предсказано: 209мс</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/007250_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">018710_RUSLAN — <code>фильмы.</code> (period)</div>
+          <div class="card-body">Факт: 800мс, предсказано: 145мс</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/018710_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">015340_RUSLAN — <code>занят.</code> (period)</div>
+          <div class="card-body">Факт: 780мс, предсказано: 133мс</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/015340_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">020395_RUSLAN — <code>Апдайка.</code> (period)</div>
+          <div class="card-body">Факт: 870мс, предсказано: 230мс</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/020395_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">019445_RUSLAN — <code>многих,</code> (comma)</div>
+          <div class="card-body">Факт: 800мс, предсказано: 161мс</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/019445_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">020805_RUSLAN — <code>грассируя—</code> (dash)</div>
+          <div class="card-body">Факт: 800мс, предсказано: 163мс</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/020805_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">018300_RUSLAN — <code>Эрмитаже…</code> (ellipsis)</div>
+          <div class="card-body">Факт: 880мс, предсказано: 252мс</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/018300_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">018990_RUSLAN — <code>Цветкова? —</code> (dash)</div>
+          <div class="card-body">Факт: 810мс, предсказано: 187мс</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/018990_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">020600_RUSLAN — <code>«Гавнодушие».</code> (period)</div>
+          <div class="card-body">Факт: 780мс, предсказано: 162мс</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/020600_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">020210_RUSLAN — <code>Бабичева,</code> (comma)</div>
+          <div class="card-body">Факт: 710мс, предсказано: 96мс</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/020210_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">022185_RUSLAN — <code>«Либерти»…</code> (ellipsis)</div>
+          <div class="card-body">Факт: 770мс, предсказано: 163мс</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/022185_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">019290_RUSLAN — <code>деликатнее.</code> (period)</div>
+          <div class="card-body">Факт: 800мс, предсказано: 199мс</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/019290_RUSLAN.wav"></audio>
+        </div>
+<h2>Пропущенные паузы -- false negative (случайные 30 из 1231)</h2>
+
+        <div class="card">
+          <div class="card-header">015470_RUSLAN — <code>тех,</code> (comma)</div>
+          <div class="card-body">Пауза в разметке есть (190мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/015470_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">020445_RUSLAN — <code>Копеляна</code> (none)</div>
+          <div class="card-body">Пауза в разметке есть (130мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/020445_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">006515_RUSLAN — <code>скромничайте,</code> (comma)</div>
+          <div class="card-body">Пауза в разметке есть (40мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/006515_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">015680_RUSLAN — <code>смокинг</code> (none)</div>
+          <div class="card-body">Пауза в разметке есть (120мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/015680_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">021570_RUSLAN — <code>беспокойтесь, -</code> (dash)</div>
+          <div class="card-body">Пауза в разметке есть (30мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/021570_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">019635_RUSLAN — <code>лице</code> (none)</div>
+          <div class="card-body">Пауза в разметке есть (220мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/019635_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">018300_RUSLAN — <code>конечно,</code> (comma)</div>
+          <div class="card-body">Пауза в разметке есть (30мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/018300_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">015145_RUSLAN — <code>Брючниковых,</code> (comma)</div>
+          <div class="card-body">Пауза в разметке есть (50мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/015145_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">001325_RUSLAN — <code>Евгений</code> (none)</div>
+          <div class="card-body">Пауза в разметке есть (110мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/001325_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">002345_RUSLAN — <code>Однажды</code> (none)</div>
+          <div class="card-body">Пауза в разметке есть (210мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/002345_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">011755_RUSLAN — <code>речи</code> (none)</div>
+          <div class="card-body">Пауза в разметке есть (200мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/011755_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">019925_RUSLAN — <code>капитализм</code> (none)</div>
+          <div class="card-body">Пауза в разметке есть (140мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/019925_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">005910_RUSLAN — <code>Коул</code> (none)</div>
+          <div class="card-body">Пауза в разметке есть (140мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/005910_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">020455_RUSLAN — <code>знаешь,</code> (comma)</div>
+          <div class="card-body">Пауза в разметке есть (30мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/020455_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">019940_RUSLAN — <code>же,</code> (comma)</div>
+          <div class="card-body">Пауза в разметке есть (40мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/019940_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">011565_RUSLAN — <code>сообща</code> (none)</div>
+          <div class="card-body">Пауза в разметке есть (240мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/011565_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">017555_RUSLAN — <code>конечно,</code> (comma)</div>
+          <div class="card-body">Пауза в разметке есть (30мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/017555_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">009835_RUSLAN — <code>реагировал</code> (none)</div>
+          <div class="card-body">Пауза в разметке есть (150мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/009835_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">019600_RUSLAN — <code>догма</code> (none)</div>
+          <div class="card-body">Пауза в разметке есть (110мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/019600_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">008550_RUSLAN — <code>вохровский</code> (none)</div>
+          <div class="card-body">Пауза в разметке есть (140мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/008550_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">015225_RUSLAN — <code>либералов</code> (none)</div>
+          <div class="card-body">Пауза в разметке есть (100мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/015225_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">008300_RUSLAN — <code>пронзительный</code> (none)</div>
+          <div class="card-body">Пауза в разметке есть (250мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/008300_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">020330_RUSLAN — <code>Инги</code> (none)</div>
+          <div class="card-body">Пауза в разметке есть (120мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/020330_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">021365_RUSLAN — <code>Гениса</code> (none)</div>
+          <div class="card-body">Пауза в разметке есть (120мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/021365_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">006780_RUSLAN — <code>больше,</code> (comma)</div>
+          <div class="card-body">Пауза в разметке есть (60мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/006780_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">019990_RUSLAN — <code>скажем</code> (none)</div>
+          <div class="card-body">Пауза в разметке есть (220мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/019990_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">019110_RUSLAN — <code>многообещающим</code> (none)</div>
+          <div class="card-body">Пауза в разметке есть (100мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/019110_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">021630_RUSLAN — <code>закон</code> (none)</div>
+          <div class="card-body">Пауза в разметке есть (150мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/021630_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">000460_RUSLAN — <code>тоннель</code> (none)</div>
+          <div class="card-body">Пауза в разметке есть (220мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/000460_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">000430_RUSLAN — <code>кажется,</code> (comma)</div>
+          <div class="card-body">Пауза в разметке есть (30мс), модель её не поставила</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/000430_RUSLAN.wav"></audio>
+        </div>
+<h2>Лишние паузы -- false positive (случайные 30 из 1469)</h2>
+
+        <div class="card">
+          <div class="card-header">019975_RUSLAN — <code>Ремизова,</code> (comma)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/019975_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">006580_RUSLAN — <code>курткой,</code> (comma)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/006580_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">017460_RUSLAN — <code>менялись.</code> (period)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/017460_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">004810_RUSLAN — <code>Изя,</code> (comma)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/004810_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">006910_RUSLAN — <code>«Ипостась,</code> (comma)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/006910_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">009870_RUSLAN — <code>Вернее,</code> (comma)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/009870_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">009220_RUSLAN — <code>сорочки,</code> (comma)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/009220_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">007195_RUSLAN — <code>стариком,</code> (comma)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/007195_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">006900_RUSLAN — <code>внимание,</code> (comma)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/006900_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">003560_RUSLAN — <code>Высокая,</code> (comma)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/003560_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">011340_RUSLAN — <code>вижу,</code> (comma)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/011340_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">012795_RUSLAN — <code>творчество,</code> (comma)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/012795_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">010915_RUSLAN — <code>Вероятно,</code> (comma)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/010915_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">008650_RUSLAN — <code>корней.</code> (period)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/008650_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">020595_RUSLAN — <code>Допустим,</code> (comma)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/020595_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">019125_RUSLAN — <code>выходками</code> (none)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/019125_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">011625_RUSLAN — <code>Хамство,</code> (comma)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/011625_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">015230_RUSLAN — <code>«гласность»,</code> (comma)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/015230_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">007660_RUSLAN — <code>халате,</code> (comma)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/007660_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">015305_RUSLAN — <code>Тасе,</code> (comma)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/015305_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">007500_RUSLAN — <code>профилем.</code> (period)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/007500_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">009215_RUSLAN — <code>уборщиц,</code> (comma)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/009215_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">019845_RUSLAN — <code>догадался,</code> (comma)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/019845_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">007745_RUSLAN — <code>Помню,</code> (comma)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/007745_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">016310_RUSLAN — <code>скандалил,</code> (comma)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/016310_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">021655_RUSLAN — <code>это-</code> (dash)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/021655_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">011410_RUSLAN — <code>поражён,</code> (comma)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/011410_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">010930_RUSLAN — <code>диссиденты,</code> (comma)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/010930_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">017085_RUSLAN — <code>единственное,</code> (comma)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/017085_RUSLAN.wav"></audio>
+        </div>
+
+        <div class="card">
+          <div class="card-header">007325_RUSLAN — <code>ширинку,</code> (comma)</div>
+          <div class="card-body">Модель поставила паузу, в разметке её нет</div>
+          <audio controls preload="none" src="file:///D:/documents/tts_labs_itmo/data/RUSLAN/007325_RUSLAN.wav"></audio>
+        </div>
+</body></html>
