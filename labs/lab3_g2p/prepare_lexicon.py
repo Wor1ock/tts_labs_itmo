@@ -30,7 +30,7 @@ from collections import Counter, defaultdict
 from praatio import textgrid
 import tqdm
 
-ALIGN_DIR = '../../data/RUSLAN_22050_align_v2/'
+ALIGN_DIR = '../../data/RUSLAN_align/v2/'
 NORMALIZED_META = '../../data/metadata_RUSLAN_22200_normalized.csv'
 TOKENS_PATH = 'data/tokens_phones.csv'
 TOKENS_SIL_PATH = 'data/tokens_phones_sil.csv'
@@ -92,7 +92,7 @@ def read_alignment(align_root: str, keep: set[str] | None, keep_sil=False) -> li
         One dict per aligned token with keys `id`, `token_id`, `token`, `phones`, `set`.
     """
     rows = []
-    print(sorted(glob.glob(os.path.join(align_root, '*.TextGrid'))))
+    # print(sorted(glob.glob(os.path.join(align_root, '*.TextGrid'))))
     for path in tqdm.tqdm(sorted(glob.glob(os.path.join(align_root, '*.TextGrid')))):
         utterance_id = os.path.basename(path)[:-len('.TextGrid')]
         if keep is not None and utterance_id not in keep:
