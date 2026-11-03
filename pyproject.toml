@@ -3,7 +3,7 @@ name = "tts-labs"
 version = "0.1.0"
 description = ""
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11, <3.12"
 dependencies = [
     "catboost>=1.2.10",
     "ipykernel>=7.3.0",
@@ -15,7 +15,23 @@ dependencies = [
     "regex>=2026.9.10",
     "scikit-learn>=1.9.1",
     "seaborn>=0.13.2",
-    "setuptools==81.0.0",
+    "setuptools>=81.0.0",
     "soundfile>=0.14.0",
     "tqdm>=4.70.1",
+    "torch==2.5.1",
+    "torchaudio==2.5.1",
+    "coqui-tts",
+    "transformers>=4.47,<5",
 ]
+
+# Источник PyTorch с CUDA 12.1
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
+# Закрепляем PyTorch за нужным индексом
+[tool.uv.sources]
+torch = { index = "pytorch-cu121" }
+torchaudio = { index = "pytorch-cu121" }
+coqui-tts = { path = "../coqui-ai-TTS", editable = true }
